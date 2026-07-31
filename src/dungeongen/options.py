@@ -55,6 +55,7 @@ class Options:
     crosshatch_border_size: float = 24.0  # Size of crosshatched border around rooms
     crosshatch_background_color: int = 0xFFFFFFFF  # White
     crosshatch_shading_color: int = 0xFFD0D2D5  # Darker gray with subtle blue tint for crosshatch background
+    crosshatch_color: int = 0xFF000000
     
     # Room rendering options
     room_shadow_color: int = 0xFFD0D0D0  # Lighter gray for room shadows
@@ -62,6 +63,7 @@ class Options:
     prop_light_color: int = 0xFFE0E0E0  # Very light gray for props
     prop_fill_color: int = 0xFFFFFFFF  # White for prop fill (same as room_color)
     prop_outline_color: int = 0xFF000000  # Black for prop outline (same as border_color)
+    number_color: int = 0xB4000000
     prop_stroke_width: float = 2.0  # Width of prop borders (thinner than door_stroke_width)
     room_shadow_offset_x: float = 6.0   # Shadow x offset in pixels (positive for left)
     room_shadow_offset_y: float = 8.0  # Shadow y offset in pixels (positive for up)
@@ -78,6 +80,9 @@ class Options:
     border_width: float = 6.0  # Width of region borders in pixels
     door_stroke_width: float = 4.0  # Width of door border strokes (2/3 of border_width)
     map_border_cells: float = 4.0  # Number of cells padding around the map
+    water_fill_color: int = 0x64505050
+    water_stroke_color: int = 0xFF282828
+    water_ripple_color: int = 0xC8282828
 
     @staticmethod
     def get_invalid_options() -> 'Options':

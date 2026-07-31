@@ -150,7 +150,7 @@ def draw_crosshatches(
     line_paint = skia.Paint(
         AntiAlias=True,
         StrokeWidth=options.crosshatch_stroke_width,
-        Color=skia.ColorBLACK,
+        Color=options.crosshatch_color,
         Style=skia.Paint.kStroke_Style,
     )
     

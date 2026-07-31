@@ -218,7 +218,7 @@ class Room(MapElement):
         
         # Create paint for text path
         text_paint = skia.Paint(
-            Color=skia.ColorSetARGB(180, 0, 0, 0),  # Semi-transparent black
+            Color=self._map.options.number_color,
             AntiAlias=True,
             Style=skia.Paint.kFill_Style
         )

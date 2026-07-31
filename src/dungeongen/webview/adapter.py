@@ -9,15 +9,16 @@ Key constraints in dungeongen:
 """
 from typing import Optional, Dict, Tuple, List, Set
 from collections import defaultdict
+import hashlib
 
 from dungeongen.layout import Dungeon, Room as LayoutRoom, Passage as LayoutPassage, Door as LayoutDoor
 from dungeongen.layout import RoomShape, DoorType as LayoutDoorType, Exit as LayoutExit, Stair as LayoutStair
 
 
-def convert_dungeon(layout_dungeon: Dungeon, water_depth: float = 0.0, 
+def convert_dungeon(layout_dungeon: Dungeon, water_depth: float = 0.0,
                     water_scale: float = 0.016, water_res: float = 0.3,
                     water_stroke: float = 3.0, water_ripple: float = 12.0,
-                    show_numbers: bool = True) -> 'Map':
+                    show_numbers: bool = True, options: Optional['Options'] = None) -> 'Map':
     """Convert a dungeonlayout Dungeon to a dungeongen Map.
     
     Args:
@@ -33,7 +34,7 @@ def convert_dungeon(layout_dungeon: Dungeon, water_depth: float = 0.0,
     from dungeongen.map.room import Room
     from dungeongen.options import Options
     
-    options = Options()
+    options = options or Options()
     dungeon_map = Map(options)
     
     # Set water if enabled
@@ -78,8 +79,12 @@ def convert_dungeon(layout_dungeon: Dungeon, water_depth: float = 0.0,
             else:
                 base_id = room_id
             
-            # Create deterministic seed from props_seed and room base_id
-            room_seed = hash((props_seed, base_id)) & 0x7FFFFFFF
+            # Python's built-in hash is process-randomized, so it cannot preserve
+            # project rendering across service restarts.
+            room_seed = int.from_bytes(
+                hashlib.sha256(f"{props_seed}:{base_id}".encode("utf-8")).digest()[:4],
+                "big"
+            ) & 0x7FFFFFFF
             
             # Determine room's orientation relative to spine
             # For bilateral (mirror) symmetry with vertical spine:

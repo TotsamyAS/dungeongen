@@ -25,6 +25,15 @@ from dungeongen.map.room import Room, RoomType
 from dungeongen.map.water_layer import WaterLayer, WaterFieldParams, WaterDepth
 from dungeongen.options import Options
 
+
+def _color_to_rgba(color: int) -> tuple[int, int, int, int]:
+    return (
+        (color >> 16) & 0xFF,
+        (color >> 8) & 0xFF,
+        color & 0xFF,
+        (color >> 24) & 0xFF,
+    )
+
 if TYPE_CHECKING:
     from dungeongen.map._arrange.arrange_utils import RoomDirection
     from dungeongen.map.door import Door, DoorType
@@ -507,6 +516,9 @@ class Map:
                 
                 # Create custom style from map settings
                 water_style = WaterStyle(
+                    fill_color=_color_to_rgba(self.options.water_fill_color),
+                    stroke_color=_color_to_rgba(self.options.water_stroke_color),
+                    ripple_color=_color_to_rgba(self.options.water_ripple_color),
                     stroke_width=getattr(self, '_water_stroke_width', 3.0),
                     ripple_width=getattr(self, '_water_stroke_width', 3.0) * 0.5,  # Ripples thinner than shore
                     ripple_insets=(

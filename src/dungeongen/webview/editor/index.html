@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="und">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title></title>
+		<link rel="stylesheet" href="/dungeon-editor/editor.css?v=20260731-3" />
+	</head>
+	<body>
+		<svg class="icon-symbols" aria-hidden="true">
+			<symbol id="icon-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></symbol>
+			<symbol id="icon-folder" viewBox="0 0 24 24"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></symbol>
+			<symbol id="icon-sparkles" viewBox="0 0 24 24"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4M22 4h-4"/></symbol>
+			<symbol id="icon-palette" viewBox="0 0 24 24"><path d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z"/><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/></symbol>
+			<symbol id="icon-loader-circle" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></symbol>
+			<symbol id="icon-download" viewBox="0 0 24 24"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></symbol>
+			<symbol id="icon-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></symbol>
+			<symbol id="icon-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+			<symbol id="icon-pencil" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
+			<symbol id="icon-trash" viewBox="0 0 24 24"><path d="M10 11v6M14 11v6M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+			<symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2m-7.07-15.07 1.41 1.41m11.32 9.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></symbol>
+			<symbol id="icon-moon" viewBox="0 0 24 24"><path d="M20.985 12.486A9 9 0 1 1 11.514 3.015c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.4Z"/></symbol>
+			<symbol id="icon-zoom-in" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35M11 8v6M8 11h6"/></symbol>
+			<symbol id="icon-zoom-out" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35M8 11h6"/></symbol>
+			<symbol id="icon-fit" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></symbol>
+		</svg>
+
+		<div class="editor-shell">
+			<main class="editor-stage">
+				<div id="canvas" class="editor-canvas" tabindex="0">
+					<div id="mapSurface" class="map-surface"><img id="mapImage" class="map-image" alt="" /></div>
+				</div>
+				<div id="emptyWorkspace" class="workspace-empty">
+					<strong data-label="emptyTitle"></strong><span data-label="emptyText"></span>
+					<button id="openGeneration" class="ui-button primary" type="button"><svg><use href="#icon-sparkles"/></svg><span data-label="openGeneration"></span></button>
+				</div>
+				<div id="loading" class="canvas-loading" hidden>
+					<div class="loading-card"><svg class="spinner" aria-hidden="true"><use href="#icon-loader-circle"/></svg><strong data-label="generating"></strong></div>
+				</div>
+				<div class="canvas-controls" role="group" data-label-aria="viewControls">
+					<button id="zoomOut" class="canvas-control" type="button"><svg><use href="#icon-zoom-out"/></svg></button>
+					<output id="zoomValue">100%</output>
+					<button id="fitMap" class="canvas-control" type="button"><svg><use href="#icon-fit"/></svg></button>
+					<button id="zoomIn" class="canvas-control" type="button"><svg><use href="#icon-zoom-in"/></svg></button>
+				</div>
+			</main>
+
+			<nav class="tool-rail" data-label-aria="toolsAria">
+				<button class="tool-icon active" data-tool-button="projects" type="button"><svg><use href="#icon-folder"/></svg></button>
+				<button class="tool-icon" data-tool-button="generation" type="button"><svg><use href="#icon-sparkles"/></svg></button>
+				<button class="tool-icon" data-tool-button="colors" type="button"><svg><use href="#icon-palette"/></svg></button>
+				<button class="tool-icon" data-tool-button="export" type="button"><svg><use href="#icon-download"/></svg></button>
+				<button class="tool-icon" data-tool-button="about" type="button"><svg><use href="#icon-info"/></svg></button>
+			</nav>
+
+			<aside class="tool-panel">
+				<div id="editorSideFire" class="game-side-fire" aria-hidden="true"></div>
+				<header class="session-bar">
+					<button id="backButton" class="session-action" type="button"><svg><use href="#icon-arrow-left"/></svg></button>
+					<div class="session-title"><strong id="projectTitle"></strong><span id="statusText"></span></div>
+					<button id="themeToggle" class="theme-toggle compact" type="button" data-tooltip="" aria-label="" aria-pressed="false"><span class="theme-toggle-orb" aria-hidden="true"><svg class="theme-icon theme-icon-sun"><use href="#icon-sun"/></svg><svg class="theme-icon theme-icon-moon"><use href="#icon-moon"/></svg></span></button>
+				</header>
+
+				<div class="tool-panel-scroll">
+					<section class="tool-view active" data-tool-panel="projects">
+						<h2 data-label="projectsTitle"></h2>
+						<div id="storageMeter" class="storage-meter" hidden>
+							<div><strong id="storageUsed"></strong><span id="storageAvailable"></span></div>
+							<div class="storage-progress" role="progressbar"><span></span></div>
+						</div>
+						<form id="createProjectForm" class="create-row">
+							<input id="newProjectName" maxlength="128" data-label-placeholder="newProjectPlaceholder" />
+							<button class="ui-button primary icon-only" type="submit"><svg><use href="#icon-plus"/></svg></button>
+						</form>
+						<div id="projectList" class="project-list"></div>
+					</section>
+
+					<section class="tool-view" data-tool-panel="generation">
+						<h2 data-label="generationTitle"></h2>
+						<label class="field"><span data-label="size"></span><select id="size"><option value="tiny" data-label="sizeTiny"></option><option value="small" data-label="sizeSmall"></option><option value="medium" data-label="sizeMedium"></option><option value="large" data-label="sizeLarge"></option><option value="xlarge" data-label="sizeXlarge"></option></select></label>
+						<label class="field"><span data-label="symmetry"></span><select id="symmetry"><option value="none" data-label="symmetryNone"></option><option value="bilateral" data-label="symmetryBilateral"></option></select></label>
+						<label class="field"><span data-label="connections"></span><select id="cross"><option value="none" data-label="none"></option><option value="low" data-label="low"></option><option value="med" data-label="medium"></option><option value="high" data-label="high"></option></select></label>
+						<label class="field"><span data-label="density"></span><select id="pack"><option value="sparse" data-label="sparse"></option><option value="normal" data-label="normal"></option><option value="tight" data-label="tight"></option></select></label>
+						<label class="field"><span data-label="roomSize"></span><select id="roomSize"><option value="cozy" data-label="cozy"></option><option value="mixed" data-label="mixed"></option><option value="grand" data-label="grand"></option></select></label>
+						<label class="field"><span data-label="water"></span><select id="water"><option value="dry" data-label="dry"></option><option value="puddles" data-label="puddles"></option><option value="pools" data-label="pools"></option><option value="lakes" data-label="lakes"></option><option value="flooded" data-label="flooded"></option></select></label>
+						<label class="field"><span data-label="seed"></span><input id="seed" maxlength="128" data-label-placeholder="randomSeed" /></label>
+						<label class="check"><input id="roundRooms" type="checkbox"/><span data-label="roundRooms"></span></label>
+						<label class="check"><input id="halls" type="checkbox" checked/><span data-label="halls"></span></label>
+						<label class="check"><input id="showNumbers" type="checkbox" checked/><span data-label="showNumbers"></span></label>
+						<button id="generateButton" class="ui-button primary full-width" type="button" data-label="generate"></button>
+					</section>
+
+					<section class="tool-view" data-tool-panel="colors">
+						<h2 data-label="colorsTitle"></h2>
+						<p class="muted" data-label="colorsHint"></p>
+						<div class="color-list">
+							<label class="color-field"><span data-label="colorBackground"></span><input id="colorBackground" type="color" /></label>
+							<label class="color-field"><span data-label="colorFloor"></span><input id="colorFloor" type="color" /></label>
+							<label class="color-field"><span data-label="colorWalls"></span><input id="colorWalls" type="color" /></label>
+							<label class="color-field"><span data-label="colorHatching"></span><input id="colorHatching" type="color" /></label>
+							<label class="color-field"><span data-label="colorShading"></span><input id="colorShading" type="color" /></label>
+							<label class="color-field"><span data-label="colorShadow"></span><input id="colorShadow" type="color" /></label>
+							<label class="color-field"><span data-label="colorGrid"></span><input id="colorGrid" type="color" /></label>
+							<label class="color-field"><span data-label="colorWater"></span><input id="colorWater" type="color" /></label>
+							<label class="color-field"><span data-label="colorNumbers"></span><input id="colorNumbers" type="color" /></label>
+						</div>
+						<div id="stats" class="stats-grid"></div>
+					</section>
+
+					<section class="tool-view" data-tool-panel="export">
+						<h2 data-label="exportTitle"></h2>
+						<p class="muted" data-label="exportHint"></p>
+						<button id="exportButton" class="ui-button primary full-width" type="button"><svg><use href="#icon-download"/></svg><span data-label="exportJpg"></span></button>
+					</section>
+
+					<section class="tool-view" data-tool-panel="about">
+						<h2 data-label="aboutTitle"></h2>
+						<p data-label="aboutText"></p>
+						<p class="muted" data-label="futureEditing"></p>
+						<a id="sourceLink" class="ui-button full-width" target="_blank" rel="noreferrer" data-label="sourceCode"></a>
+					</section>
+				</div>
+			</aside>
+		</div>
+		<script src="/dungeon-editor/editor.js?v=20260731-3" defer></script>
+	</body>
+</html>

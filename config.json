@@ -1,0 +1,7 @@
+{
+	"port": 5050,
+	"workers": 2,
+	"threads": 2,
+	"requestTimeoutSeconds": 180,
+	"colorApplyDelayMs": 200
+}

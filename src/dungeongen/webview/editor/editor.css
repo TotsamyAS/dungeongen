@@ -149,6 +149,8 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .ui-button { min-height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; color: var(--text); background: var(--card); cursor: pointer; }
 .ui-button:hover { border-color: var(--gold); color: var(--vellum); background: rgba(114, 34, 42, 0.5); }
 .ui-button.primary { border-color: rgba(216, 139, 53, 0.76); background: linear-gradient(180deg, rgba(114, 34, 42, .94), rgba(58, 11, 13, .94)); }
+.ui-button.danger { border-color: rgba(231, 101, 101, .62); color: #ffd7d7; background: rgba(116, 24, 31, .42); }
+.ui-button.danger:hover { border-color: #ef8f8f; color: #fff2f2; background: rgba(145, 31, 38, .7); }
 .ui-button:disabled { opacity: .5; cursor: not-allowed; }
 .full-width { width: 100%; }
 .icon-only { width: 38px; padding: 0; }
@@ -191,6 +193,17 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .palette-option { min-height: 42px; display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 9px; border: 1px solid transparent; border-radius: 7px; padding: 6px; color: var(--text); text-align: left; background: transparent; cursor: pointer; }
 .palette-option:hover, .palette-option[aria-selected='true'] { border-color: var(--gold); color: var(--vellum); background: rgba(114, 34, 42, .44); }
 .palette-option .palette-preview { width: 92px; }
+.palette-group-label { padding: 4px 6px 2px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.palette-group-divider { height: 1px; margin: 4px 2px; background: var(--line); }
+.palette-group-empty { margin: 0; padding: 7px 6px; color: var(--muted); font-size: 11px; }
+.palette-editor { display: grid; gap: 8px; margin: -2px 0 12px; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+.palette-name-field { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+.palette-name-field input { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 7px; padding: 8px 9px; color: var(--text); background: var(--field); }
+.palette-name-field input:focus { border-color: var(--gold); outline: none; }
+.palette-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+.palette-actions .ui-button { min-width: 0; }
+.palette-status { min-height: 16px; margin: 0; color: var(--muted); font-size: 11px; }
+.palette-status.error { color: #ef9a9a; }
 .color-field { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: var(--card); }
 .color-field span { min-width: 0; font-size: 12px; }
 .color-field input { width: 42px; height: 28px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 7px; padding: 2px; background: var(--field); cursor: pointer; }
@@ -227,6 +240,8 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 :root[data-theme='light'] .edit-tool-tile { color: var(--text); border-color: var(--line); background: rgba(255, 252, 232, .66); }
 :root[data-theme='light'] .edit-tool-tile:hover, :root[data-theme='light'] .edit-tool-tile.active { color: var(--wine-dark); border-color: var(--gold); background: rgba(255, 238, 191, .92); }
 :root[data-theme='light'] .ui-button.primary, :root[data-theme='light'] .ui-button.primary:hover { color: #fff7d7; border-color: var(--wine); background: linear-gradient(180deg, #a6533e, #7b2d24 58%, #5a1b17); }
+:root[data-theme='light'] .ui-button.danger { color: #7f1f28; border-color: rgba(151, 48, 58, .52); background: rgba(176, 70, 79, .12); }
+:root[data-theme='light'] .ui-button.danger:hover { color: #fff; border-color: #9e303b; background: #9e303b; }
 :root[data-theme='light'] .theme-toggle, :root[data-theme='light'] .theme-toggle.compact { color: var(--text); background: rgba(255, 252, 232, .56); box-shadow: none; }
 :root[data-theme='light'] .theme-toggle:hover, :root[data-theme='light'] .theme-toggle.compact:hover { color: var(--wine-dark); border-color: var(--gold); background: rgba(255, 238, 191, .9); }
 :root[data-theme='light'] .theme-toggle-orb { color: currentColor; background: transparent; box-shadow: none; }

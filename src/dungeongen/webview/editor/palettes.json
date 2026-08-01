@@ -3,15 +3,15 @@
 		"id": "classic",
 		"labelKey": "paletteClassic",
 		"colors": {
-			"background": "#ffffff",
+			"background": "#f3f4f6",
 			"floor": "#ffffff",
-			"walls": "#000000",
-			"hatching": "#000000",
-			"shading": "#d0d2d5",
-			"shadow": "#d0d0d0",
-			"grid": "#202020",
-			"water": "#505050",
-			"numbers": "#000000"
+			"walls": "#1f2933",
+			"hatching": "#56616d",
+			"shading": "#d8dde3",
+			"shadow": "#b8c0c8",
+			"grid": "#7b8794",
+			"water": "#2f7ea5",
+			"numbers": "#17212b"
 		}
 	},
 	{
@@ -25,7 +25,7 @@
 			"shading": "#c8ad77",
 			"shadow": "#9b7b50",
 			"grid": "#96764f",
-			"water": "#66858b",
+			"water": "#497f91",
 			"numbers": "#4a2d1c"
 		}
 	},
@@ -40,23 +40,8 @@
 			"shading": "#a27c50",
 			"shadow": "#513522",
 			"grid": "#765031",
-			"water": "#55777a",
+			"water": "#3f747d",
 			"numbers": "#2a170f"
-		}
-	},
-	{
-		"id": "obsidian",
-		"labelKey": "paletteObsidian",
-		"colors": {
-			"background": "#090b10",
-			"floor": "#272c35",
-			"walls": "#d7b36a",
-			"hatching": "#77603d",
-			"shading": "#171b22",
-			"shadow": "#030405",
-			"grid": "#525b68",
-			"water": "#244f67",
-			"numbers": "#ffe0a0"
 		}
 	},
 	{
@@ -85,7 +70,7 @@
 			"shading": "#7c8559",
 			"shadow": "#3f472f",
 			"grid": "#626b49",
-			"water": "#3d7470",
+			"water": "#2f7374",
 			"numbers": "#202317"
 		}
 	},
@@ -100,143 +85,113 @@
 			"shading": "#d2b37d",
 			"shadow": "#9e7650",
 			"grid": "#aa8459",
-			"water": "#477f91",
+			"water": "#3f7e96",
 			"numbers": "#4a2f20"
 		}
 	},
 	{
-		"id": "moonlit",
-		"labelKey": "paletteMoonlit",
+		"id": "granite-keep",
+		"labelKey": "paletteGraniteKeep",
 		"colors": {
-			"background": "#101827",
-			"floor": "#27364d",
-			"walls": "#d8e3f0",
-			"hatching": "#7086a2",
-			"shading": "#1b283b",
-			"shadow": "#080d16",
-			"grid": "#536983",
-			"water": "#2b6e9b",
-			"numbers": "#f2f6fb"
+			"background": "#565d63",
+			"floor": "#c8c9c4",
+			"walls": "#20252a",
+			"hatching": "#6f767b",
+			"shading": "#a9aca9",
+			"shadow": "#777e82",
+			"grid": "#858b8e",
+			"water": "#3d7188",
+			"numbers": "#1c2227"
 		}
 	},
 	{
-		"id": "infernal",
-		"labelKey": "paletteInfernal",
+		"id": "sunken-sanctum",
+		"labelKey": "paletteSunkenSanctum",
 		"colors": {
-			"background": "#160606",
-			"floor": "#49201a",
-			"walls": "#ffb45f",
-			"hatching": "#9d3f27",
-			"shading": "#2b0d0b",
-			"shadow": "#080202",
-			"grid": "#7d2d20",
-			"water": "#7d1918",
-			"numbers": "#ffd49a"
+			"background": "#102c32",
+			"floor": "#6f9690",
+			"walls": "#183c3d",
+			"hatching": "#3e6e6b",
+			"shading": "#466f6c",
+			"shadow": "#183f42",
+			"grid": "#547f7a",
+			"water": "#147c96",
+			"numbers": "#f1e8c6"
 		}
 	},
 	{
-		"id": "royal",
-		"labelKey": "paletteRoyal",
+		"id": "desert-twilight",
+		"labelKey": "paletteDesertTwilight",
 		"colors": {
-			"background": "#181128",
-			"floor": "#493a68",
-			"walls": "#e7c875",
-			"hatching": "#8b72a8",
-			"shading": "#302348",
-			"shadow": "#0c0715",
-			"grid": "#75628f",
-			"water": "#315b83",
-			"numbers": "#fff0b0"
+			"background": "#33283a",
+			"floor": "#cda66e",
+			"walls": "#35232e",
+			"hatching": "#7b5d63",
+			"shading": "#8f6f68",
+			"shadow": "#1d1622",
+			"grid": "#9d7a6d",
+			"water": "#367a94",
+			"numbers": "#2a1b24"
 		}
 	},
 	{
-		"id": "verdigris",
-		"labelKey": "paletteVerdigris",
+		"id": "ivory-ink",
+		"labelKey": "paletteIvoryInk",
 		"colors": {
-			"background": "#17322f",
-			"floor": "#9bb9a5",
-			"walls": "#17302c",
-			"hatching": "#4e746a",
-			"shading": "#719688",
-			"shadow": "#294d45",
-			"grid": "#5b8276",
-			"water": "#287f86",
-			"numbers": "#102724"
+			"background": "#e4dfd2",
+			"floor": "#fffdf5",
+			"walls": "#1e2024",
+			"hatching": "#55585d",
+			"shading": "#cbc7bc",
+			"shadow": "#aaa69d",
+			"grid": "#8b8982",
+			"water": "#397b9d",
+			"numbers": "#15171a"
 		}
 	},
 	{
-		"id": "blood-moon",
-		"labelKey": "paletteBloodMoon",
+		"id": "autumn-ruins",
+		"labelKey": "paletteAutumnRuins",
 		"colors": {
-			"background": "#190b12",
-			"floor": "#5d2935",
-			"walls": "#f0c6bf",
-			"hatching": "#8c4756",
-			"shading": "#351621",
-			"shadow": "#090306",
-			"grid": "#78404b",
-			"water": "#3c506e",
-			"numbers": "#ffe0da"
+			"background": "#4b3326",
+			"floor": "#b98b5a",
+			"walls": "#2b1d17",
+			"hatching": "#7d4f34",
+			"shading": "#946d49",
+			"shadow": "#35241d",
+			"grid": "#8c6548",
+			"water": "#3c7382",
+			"numbers": "#211612"
 		}
 	},
 	{
-		"id": "blueprint",
-		"labelKey": "paletteBlueprint",
+		"id": "salt-caverns",
+		"labelKey": "paletteSaltCaverns",
 		"colors": {
-			"background": "#17426c",
-			"floor": "#1f5689",
-			"walls": "#f2f7f7",
-			"hatching": "#8fc2da",
-			"shading": "#1a4a77",
-			"shadow": "#0e2d4d",
-			"grid": "#7fb4cf",
-			"water": "#68c3d7",
-			"numbers": "#ffffff"
+			"background": "#b9b5a9",
+			"floor": "#ece8dc",
+			"walls": "#4d4a45",
+			"hatching": "#8f8a7e",
+			"shading": "#d3cec1",
+			"shadow": "#969186",
+			"grid": "#aaa497",
+			"water": "#4d8798",
+			"numbers": "#34322f"
 		}
 	},
 	{
-		"id": "amethyst",
-		"labelKey": "paletteAmethyst",
+		"id": "ancient-marble",
+		"labelKey": "paletteAncientMarble",
 		"colors": {
-			"background": "#24152f",
-			"floor": "#6e557e",
-			"walls": "#eadcf0",
-			"hatching": "#a88bb3",
-			"shading": "#493557",
-			"shadow": "#150b1d",
-			"grid": "#9278a0",
-			"water": "#426f91",
-			"numbers": "#f9ecff"
-		}
-	},
-	{
-		"id": "volcanic",
-		"labelKey": "paletteVolcanic",
-		"colors": {
-			"background": "#0d0d0e",
-			"floor": "#333235",
-			"walls": "#ee6b37",
-			"hatching": "#75402f",
-			"shading": "#202023",
-			"shadow": "#050506",
-			"grid": "#5d4b47",
-			"water": "#244b60",
-			"numbers": "#ffc18f"
-		}
-	},
-	{
-		"id": "forest-temple",
-		"labelKey": "paletteForestTemple",
-		"colors": {
-			"background": "#172019",
-			"floor": "#8f9b72",
-			"walls": "#d5c898",
-			"hatching": "#586547",
-			"shading": "#667153",
-			"shadow": "#293126",
-			"grid": "#6d7757",
-			"water": "#356e68",
-			"numbers": "#f2e8bd"
+			"background": "#c9c4b7",
+			"floor": "#f1eee5",
+			"walls": "#51575a",
+			"hatching": "#8a8e8c",
+			"shading": "#d7d3c8",
+			"shadow": "#9f9b92",
+			"grid": "#aaa79f",
+			"water": "#43819a",
+			"numbers": "#3c4143"
 		}
 	}
 ]

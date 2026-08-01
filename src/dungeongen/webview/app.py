@@ -37,6 +37,7 @@ DEFAULT_CANONICAL_RENDER_DELAY_MS = 10_000
 DEFAULT_PREVIEW_SIZE_PIXELS = 48
 DEFAULT_WORKING_COPY_IDLE_SAVE_MS = 15_000
 DEFAULT_WORKING_COPY_INTERVAL_MS = 300_000
+DEFAULT_THEME_SAVE_TIMEOUT_MS = 20_000
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_PROJECT_BYTES + 512 * 1024
@@ -84,13 +85,18 @@ def _public_editor_config() -> dict[str, int | bool]:
     raw_interval_save = value.get("workingCopyIntervalMs")
     if isinstance(raw_interval_save, bool) or not isinstance(raw_interval_save, (int, float)):
         raw_interval_save = DEFAULT_WORKING_COPY_INTERVAL_MS
+    raw_theme_save_timeout = value.get("themeSaveTimeoutMs")
+    if isinstance(raw_theme_save_timeout, bool) or not isinstance(raw_theme_save_timeout, (int, float)):
+        raw_theme_save_timeout = DEFAULT_THEME_SAVE_TIMEOUT_MS
     return {
         "colorApplyDelayMs": max(0, min(5000, int(raw_delay))),
         "canonicalRenderDelayMs": max(0, min(60_000, int(raw_render_delay))),
         "previewSizePixels": max(32, min(256, int(raw_preview_size))),
         "workingCopyIdleSaveMs": max(1000, min(300_000, int(raw_idle_save))),
         "workingCopyIntervalMs": max(10_000, min(1_800_000, int(raw_interval_save))),
+        "themeSaveTimeoutMs": max(5_000, min(120_000, int(raw_theme_save_timeout))),
         "editTimeLogging": _logging_enabled(value, "EDIT_TIME_LOGGING"),
+        "themeSaveLogging": _logging_enabled(value, "THEME_SAVE_LOGGING"),
     }
 
 
@@ -402,8 +408,8 @@ def create_default_project() -> Response:
 def export_project() -> tuple[Response, int] | Response:
     try:
         project = parse_project_bytes(request.get_data(cache=False))
-        if project["renderSvg"] is None:
-            raise ProjectValidationError("emptyProject")
+        # Durable editor saves intentionally omit renderSvg to keep project files compact.
+        # JPG rendering is based on layout/structure and validates those fields itself.
         image = render_project_jpeg(project)
     except ProjectValidationError as error:
         return _json_error(str(error), 400)

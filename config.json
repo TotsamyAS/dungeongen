@@ -8,8 +8,10 @@
 	"workingCopyIdleSaveMs": 15000,
 	"workingCopyIntervalMs": 300000,
 	"previewSizePixels": 48,
+	"themeSaveTimeoutMs": 20000,
 	"logging": {
 		"EDITING_LOGGING": false,
-		"EDIT_TIME_LOGGING": true
+		"EDIT_TIME_LOGGING": false,
+		"THEME_SAVE_LOGGING": true
 	}
 }

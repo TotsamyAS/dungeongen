@@ -61,22 +61,29 @@ class Fountain(Prop):
         )
         canvas.drawCircle(0, 0, FOUNTAIN_RADIUS, edge_stroke)
         
-        # Water circle (slightly gray/blue tinted)
+        # Fountain water uses the same palette colors as map water.
         water_paint = skia.Paint(
             AntiAlias=True,
             Style=skia.Paint.kFill_Style,
-            Color=0xFFE8EEF2  # Light blue-gray for water
+            Color=options.water_fill_color if options else 0x64505050
         )
         canvas.drawCircle(0, 0, WATER_RADIUS, water_paint)
-        
-        # Water outline
+
         water_stroke = skia.Paint(
             AntiAlias=True,
             Style=skia.Paint.kStroke_Style,
             StrokeWidth=(options.prop_stroke_width if options else 2.0) * 0.75,
-            Color=options.prop_outline_color if options else 0xFF000000
+            Color=options.water_stroke_color if options else 0xFF282828
         )
         canvas.drawCircle(0, 0, WATER_RADIUS, water_stroke)
+
+        water_ripple = skia.Paint(
+            AntiAlias=True,
+            Style=skia.Paint.kStroke_Style,
+            StrokeWidth=(options.prop_stroke_width if options else 2.0) * 0.4,
+            Color=options.water_ripple_color if options else 0xC8282828
+        )
+        canvas.drawCircle(0, 0, WATER_RADIUS * 0.62, water_ripple)
         
         # Center fountain spout
         center_paint = skia.Paint(

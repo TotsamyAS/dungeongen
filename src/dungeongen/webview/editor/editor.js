@@ -1,10 +1,11 @@
 const fallbackLocale = 'ru';
-const editorAssetVersion = '20260801-12';
+const editorAssetVersion = '20260801-14';
 const defaultColorApplyDelayMs = 350;
 const defaultCanonicalRenderDelayMs = 10000;
 const defaultPreviewSizePixels = 48;
 const defaultWorkingCopyIdleSaveMs = 15000;
 const defaultWorkingCopyIntervalMs = 300000;
+const defaultThemeSaveTimeoutMs = 20000;
 const cellSize = 64;
 const canvasPadding = cellSize * 2;
 const maxHistoryEntries = 20;
@@ -42,7 +43,7 @@ try {
 }
 const dictionaries = new Map();
 let labels = {};
-let hostState = { projects: [], selectedProjectId: null, storage: null };
+let hostState = { projects: [], customThemes: [], selectedProjectId: null, storage: null };
 let currentProject = null;
 let currentProjectId = null;
 let currentProjectName = '';
@@ -71,6 +72,8 @@ let colorApplyDelayMs = defaultColorApplyDelayMs;
 let canonicalRenderDelayMs = defaultCanonicalRenderDelayMs;
 let previewSizePixels = defaultPreviewSizePixels;
 let editTimeLogging = false;
+let themeSaveLogging = false;
+let themeSaveTimeoutMs = defaultThemeSaveTimeoutMs;
 let fitImageOnLoad = true;
 let encoderWorker = null;
 let encoderRequestId = 0;
@@ -90,6 +93,12 @@ let workspaceView = 'preview';
 let objectRotation = 0;
 let hoveredCell = null;
 let colorPresets = [];
+let selectedCustomThemeId = null;
+let themeSaving = false;
+let themeStatusKey = '';
+let themeStatusError = false;
+let pendingThemeRequestId = '';
+let pendingThemeTimeout = null;
 let paletteMenuOpen = false;
 let editPreviewFrame = 0;
 let queuedEditPreview = null;
@@ -154,6 +163,11 @@ const elements = {
 	palettePresetName: document.getElementById('palettePresetName'),
 	palettePresetPreview: document.getElementById('palettePresetPreview'),
 	palettePresetMenu: document.getElementById('palettePresetMenu'),
+	paletteName: document.getElementById('paletteName'),
+	paletteSave: document.getElementById('paletteSave'),
+	paletteSaveText: document.getElementById('paletteSaveText'),
+	paletteDelete: document.getElementById('paletteDelete'),
+	paletteStatus: document.getElementById('paletteStatus'),
 	fields: {
 		size: document.getElementById('size'),
 		symmetry: document.getElementById('symmetry'),
@@ -248,6 +262,9 @@ async function loadEditorConfig() {
 		const previewSize = Number(config?.previewSizePixels);
 		if (Number.isFinite(previewSize)) previewSizePixels = Math.max(32, Math.min(256, Math.round(previewSize)));
 		editTimeLogging = config?.editTimeLogging === true;
+		themeSaveLogging = config?.themeSaveLogging === true;
+		const themeTimeout = Number(config?.themeSaveTimeoutMs);
+		if (Number.isFinite(themeTimeout)) themeSaveTimeoutMs = Math.max(5000, Math.min(120000, Math.round(themeTimeout)));
 		const idleSave = Number(config?.workingCopyIdleSaveMs);
 		if (Number.isFinite(idleSave)) workingCopyIdleSaveMs = Math.max(1000, Math.min(300000, Math.round(idleSave)));
 		const intervalSave = Number(config?.workingCopyIntervalMs);
@@ -257,6 +274,8 @@ async function loadEditorConfig() {
 		canonicalRenderDelayMs = defaultCanonicalRenderDelayMs;
 		previewSizePixels = defaultPreviewSizePixels;
 		editTimeLogging = false;
+		themeSaveLogging = false;
+		themeSaveTimeoutMs = defaultThemeSaveTimeoutMs;
 		workingCopyIdleSaveMs = defaultWorkingCopyIdleSaveMs;
 		workingCopyIntervalMs = defaultWorkingCopyIntervalMs;
 	}
@@ -386,6 +405,30 @@ function logEditTime(requestId, stage, elapsedMs) {
 	console.info(`[EDIT-TIME] id=${requestId} stage=${stage} elapsed_ms=${elapsedMs.toFixed(2)}`);
 }
 
+function logThemeSave(requestId, stage, details = {}) {
+	if (!themeSaveLogging) return;
+	console.info('[THEME-SAVE]', { requestId, stage, ...details });
+}
+
+function clearThemeRequestTimeout() {
+	if (pendingThemeTimeout) clearTimeout(pendingThemeTimeout);
+	pendingThemeTimeout = null;
+}
+
+function armThemeRequestTimeout(operation) {
+	clearThemeRequestTimeout();
+	const requestId = pendingThemeRequestId;
+	pendingThemeTimeout = setTimeout(() => {
+		if (!requestId || pendingThemeRequestId !== requestId) return;
+		logThemeSave(requestId, 'editor_timeout', { operation, timeoutMs: themeSaveTimeoutMs });
+		pendingThemeRequestId = '';
+		themeSaving = false;
+		themeStatusKey = operation === 'delete' ? 'paletteThemeDeleteTimeout' : 'paletteThemeSaveTimeout';
+		themeStatusError = true;
+		renderPaletteThemeControls();
+	}, themeSaveTimeoutMs);
+}
+
 function bytesToBase64(bytes) {
 	let binary = '';
 	const chunk = 0x8000;
@@ -485,9 +528,10 @@ function styledSvg(template, appearanceValue) {
 	return svg;
 }
 
-function writeAppearance(value) {
+function writeAppearance(value, { preservePaletteSelection = false } = {}) {
 	const appearance = normalizeAppearance(value);
 	for (const [key, input] of Object.entries(elements.colors)) input.value = appearance[key];
+	if (!preservePaletteSelection) setPaletteNameFromAppearance(appearance);
 	syncColorPreset(appearance);
 }
 
@@ -497,9 +541,40 @@ function readAppearance() {
 
 const palettePreviewKeys = ['background', 'floor', 'walls', 'hatching', 'water', 'numbers'];
 
+function customColorPresets() {
+	if (!Array.isArray(hostState.customThemes)) return [];
+	return hostState.customThemes
+		.filter((theme) => theme && typeof theme.id === 'string' && typeof theme.name === 'string' && theme.colors)
+		.map((theme) => ({
+			id: theme.id,
+			name: theme.name,
+			kind: 'custom',
+			colors: normalizeAppearance(theme.colors)
+		}));
+}
+
+function allColorPresets() {
+	return [
+		...colorPresets.map((preset) => ({ ...preset, kind: 'base' })),
+		...customColorPresets()
+	];
+}
+
+function paletteKey(preset) {
+	return `${preset.kind}:${preset.id}`;
+}
+
+function paletteName(preset) {
+	return preset.kind === 'custom' ? preset.name : t(preset.labelKey);
+}
+
 function matchingColorPreset(value) {
 	const appearance = normalizeAppearance(value);
-	return colorPresets.find((preset) => Object.keys(defaultAppearance).every((key) => preset.colors[key] === appearance[key])) ?? null;
+	return allColorPresets().find((preset) => Object.keys(defaultAppearance).every((key) => preset.colors[key] === appearance[key])) ?? null;
+}
+
+function selectedCustomPreset() {
+	return customColorPresets().find((preset) => preset.id === selectedCustomThemeId) ?? null;
 }
 
 function fillPalettePreview(element, colors) {
@@ -511,15 +586,44 @@ function fillPalettePreview(element, colors) {
 	}
 }
 
+function themeErrorKey(code, operation) {
+	if (code === 'duplicate') return 'paletteThemeDuplicate';
+	if (code === 'limitReached') return 'paletteThemeLimit';
+	if (code === 'invalid') return 'paletteThemeInvalid';
+	if (code === 'timeout') return operation === 'delete' ? 'paletteThemeDeleteTimeout' : 'paletteThemeSaveTimeout';
+	return operation === 'delete' ? 'paletteThemeDeleteFailed' : 'paletteThemeSaveFailed';
+}
+
+function renderPaletteThemeControls() {
+	const custom = selectedCustomPreset();
+	const enabled = Boolean(currentProject?.structure) && !themeSaving;
+	elements.paletteName.disabled = !enabled;
+	elements.paletteSave.disabled = !enabled;
+	elements.paletteDelete.disabled = !enabled || !custom;
+	elements.paletteDelete.hidden = !custom;
+	elements.paletteSaveText.textContent = t(custom ? 'paletteUpdateTheme' : 'paletteSaveTheme');
+	elements.paletteStatus.textContent = themeStatusKey ? t(themeStatusKey) : '';
+	elements.paletteStatus.classList.toggle('error', themeStatusError);
+}
+
 function syncColorPreset(value = readAppearance()) {
 	if (!elements.palettePresetName || !elements.palettePresetPreview) return;
 	const appearance = normalizeAppearance(value);
-	const preset = matchingColorPreset(appearance);
-	elements.palettePresetName.textContent = t(preset?.labelKey ?? 'paletteCustom');
-	fillPalettePreview(elements.palettePresetPreview, preset?.colors ?? appearance);
-	elements.palettePresetMenu?.querySelectorAll('[data-palette-id]').forEach((option) => {
-		option.setAttribute('aria-selected', String(option.dataset.paletteId === preset?.id));
+	const selected = selectedCustomPreset();
+	const preset = selected ?? matchingColorPreset(appearance);
+	elements.palettePresetName.textContent = preset ? paletteName(preset) : t('paletteCustom');
+	fillPalettePreview(elements.palettePresetPreview, selected ? appearance : (preset?.colors ?? appearance));
+	const selectedKey = preset ? paletteKey(preset) : '';
+	elements.palettePresetMenu?.querySelectorAll('[data-palette-key]').forEach((option) => {
+		option.setAttribute('aria-selected', String(option.dataset.paletteKey === selectedKey));
 	});
+	renderPaletteThemeControls();
+}
+
+function setPaletteNameFromAppearance(value) {
+	const preset = matchingColorPreset(value);
+	selectedCustomThemeId = preset?.kind === 'custom' ? preset.id : null;
+	elements.paletteName.value = preset ? paletteName(preset) : '';
 }
 
 function closeColorPresetMenu() {
@@ -528,30 +632,58 @@ function closeColorPresetMenu() {
 	elements.palettePresetButton.setAttribute('aria-expanded', 'false');
 }
 
+function appendPaletteGroupLabel(key) {
+	const label = document.createElement('div');
+	label.className = 'palette-group-label';
+	label.textContent = t(key);
+	elements.palettePresetMenu.append(label);
+}
+
+function appendPaletteOption(preset) {
+	const option = document.createElement('button');
+	option.type = 'button';
+	option.className = 'palette-option';
+	option.dataset.paletteKey = paletteKey(preset);
+	option.setAttribute('role', 'option');
+	const preview = document.createElement('span');
+	preview.className = 'palette-preview';
+	preview.setAttribute('aria-hidden', 'true');
+	fillPalettePreview(preview, preset.colors);
+	const name = document.createElement('strong');
+	name.textContent = paletteName(preset);
+	option.append(preview, name);
+	option.addEventListener('click', () => {
+		if (!currentProject?.structure) return;
+		if (!pendingAppearanceSnapshot) pendingAppearanceSnapshot = cloneProject();
+		selectedCustomThemeId = preset.kind === 'custom' ? preset.id : null;
+		elements.paletteName.value = paletteName(preset);
+		themeStatusKey = '';
+		themeStatusError = false;
+		writeAppearance(preset.colors, { preservePaletteSelection: true });
+		closeColorPresetMenu();
+		void updateAppearance();
+	});
+	elements.palettePresetMenu.append(option);
+}
+
 function renderColorPresetOptions() {
 	if (!elements.palettePresetMenu) return;
 	elements.palettePresetMenu.replaceChildren();
-	for (const preset of colorPresets) {
-		const option = document.createElement('button');
-		option.type = 'button';
-		option.className = 'palette-option';
-		option.dataset.paletteId = preset.id;
-		option.setAttribute('role', 'option');
-		const preview = document.createElement('span');
-		preview.className = 'palette-preview';
-		preview.setAttribute('aria-hidden', 'true');
-		fillPalettePreview(preview, preset.colors);
-		const name = document.createElement('strong');
-		name.textContent = t(preset.labelKey);
-		option.append(preview, name);
-		option.addEventListener('click', () => {
-			if (!currentProject?.structure) return;
-			if (!pendingAppearanceSnapshot) pendingAppearanceSnapshot = cloneProject();
-			writeAppearance(preset.colors);
-			closeColorPresetMenu();
-			void updateAppearance();
-		});
-		elements.palettePresetMenu.append(option);
+	appendPaletteGroupLabel('paletteBaseThemes');
+	for (const preset of colorPresets) appendPaletteOption({ ...preset, kind: 'base' });
+	const divider = document.createElement('div');
+	divider.className = 'palette-group-divider';
+	divider.setAttribute('role', 'separator');
+	elements.palettePresetMenu.append(divider);
+	appendPaletteGroupLabel('paletteUserThemes');
+	const custom = customColorPresets();
+	if (custom.length) {
+		for (const preset of custom) appendPaletteOption(preset);
+	} else {
+		const empty = document.createElement('p');
+		empty.className = 'palette-group-empty';
+		empty.textContent = t('paletteNoUserThemes');
+		elements.palettePresetMenu.append(empty);
 	}
 	syncColorPreset(currentProject?.appearance ?? defaultAppearance);
 }
@@ -739,6 +871,7 @@ function renderAll() {
 	elements.openGeneration.disabled = !currentProjectId;
 	for (const input of Object.values(elements.colors)) input.disabled = !currentProject?.structure;
 	elements.palettePresetButton.disabled = !currentProject?.structure || !colorPresets.length;
+	renderPaletteThemeControls();
 	document.querySelector('[data-tool-button="editing"]').disabled = !canEditMap();
 	document.querySelectorAll('[data-edit-tool]').forEach((button) => { button.disabled = !canEditMap(); });
 	elements.undoEdit.disabled = !undoStack.length || generating || editing;
@@ -1015,9 +1148,17 @@ function appendLightweightObject(parent, object, extraClass = '') {
 		}));
 	} else if (object.type === 'fountain') {
 		const outerRadius = cellSize * .7;
+		const waterRadius = outerRadius * .82;
 		group.append(
 			svgElement('circle', { cx, cy, r: outerRadius, fill, stroke: outline, 'stroke-width': 2 }),
-			svgElement('circle', { cx, cy, r: outerRadius * .82, fill: '#e8eef2', stroke: outline, 'stroke-width': 1.5 }),
+			svgElement('circle', {
+				cx, cy, r: waterRadius, fill: appearance.water, 'fill-opacity': .39,
+				stroke: appearance.water, 'stroke-width': 1.5
+			}),
+			svgElement('circle', {
+				cx, cy, r: waterRadius * .62, fill: 'none', stroke: appearance.water,
+				'stroke-opacity': .78, 'stroke-width': .8
+			}),
 			svgElement('circle', { cx, cy, r: outerRadius * .25, fill, stroke: outline, 'stroke-width': 1 })
 		);
 	} else if (object.type === 'dais') {
@@ -1367,12 +1508,17 @@ function fitMap() {
 	updateTransform();
 }
 
-function zoom(multiplier) {
+function zoom(multiplier, clientX = null, clientY = null) {
 	const oldScale = scale;
-	scale = Math.max(.1, Math.min(4, scale * multiplier));
-	const { width, height } = workspaceDimensions();
-	panX += (width * oldScale - width * scale) / 2;
-	panY += (height * oldScale - height * scale) / 2;
+	const nextScale = Math.max(.1, Math.min(4, scale * multiplier));
+	if (nextScale === oldScale) return;
+	const canvasRect = elements.canvas.getBoundingClientRect();
+	const focalX = clientX == null ? 0 : clientX - canvasRect.left - canvasRect.width / 2;
+	const focalY = clientY == null ? 0 : clientY - canvasRect.top - canvasRect.height / 2;
+	const scaleRatio = nextScale / oldScale;
+	panX = focalX - (focalX - panX) * scaleRatio;
+	panY = focalY - (focalY - panY) * scaleRatio;
+	scale = nextScale;
 	updateTransform();
 }
 
@@ -2307,7 +2453,7 @@ async function commitStructure(operation) {
 	if (decorationOperation) refreshPendingDecorationObjects();
 	pushHistory(previous);
 	writeParameters(currentProject.parameters);
-	writeAppearance(currentProject.appearance);
+	writeAppearance(currentProject.appearance, { preservePaletteSelection: true });
 	timing('client_operation', performance.now() - startedAt);
 	localStatus = 'statusUnsaved';
 	markWorkingCopyDirty(decorationOperation ? Math.min(canonicalRenderDelayMs, 750) : canonicalRenderDelayMs);
@@ -2468,12 +2614,14 @@ async function openProject(message) {
 		localStatus = 'errorGeneric';
 	}
 	renderAll();
+	if (currentProject?.structure) fitMap();
 	void initializeProjectStructure();
 	if (workingCopyDirty) scheduleWorkingCopyCheckpoint();
 	if (structureNeedsRender()) scheduleCanonicalRender();
 }
 
 function applyHostState(next) {
+	const previousThemes = JSON.stringify(hostState.customThemes ?? []);
 	hostState = { ...hostState, ...(next ?? {}) };
 	capability = typeof hostState.capability === 'string' ? hostState.capability : capability;
 	if (hostState.statusCode || hostState.errorCode) localStatus = '';
@@ -2484,6 +2632,10 @@ function applyHostState(next) {
 		applyTheme(hostState.theme, { persist: false });
 	}
 	if (hostState.statusCode === 'saved' && !hostState.errorCode) acknowledgeHostSave();
+	if (JSON.stringify(hostState.customThemes ?? []) !== previousThemes) {
+		if (selectedCustomThemeId && !selectedCustomPreset()) selectedCustomThemeId = null;
+		renderColorPresetOptions();
+	}
 	renderAll();
 	void initializeProjectStructure();
 }
@@ -2588,6 +2740,105 @@ function scheduleAppearanceUpdate() {
 	appearanceUpdateTimer = setTimeout(() => void updateAppearance(), colorApplyDelayMs);
 }
 
+function nextThemeRequestId() {
+	return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function savePaletteTheme() {
+	if (!currentProject?.structure || themeSaving) return;
+	const name = elements.paletteName.value.trim();
+	if (!name) {
+		themeStatusKey = 'paletteThemeNameRequired';
+		themeStatusError = true;
+		renderPaletteThemeControls();
+		elements.paletteName.focus();
+		return;
+	}
+	themeSaving = true;
+	themeStatusKey = 'paletteThemeSaving';
+	themeStatusError = false;
+	pendingThemeRequestId = nextThemeRequestId();
+	logThemeSave(pendingThemeRequestId, 'editor_send', { operation: selectedCustomThemeId ? 'update' : 'create', timeoutMs: themeSaveTimeoutMs });
+	send('dungeongen:theme-save', {
+		requestId: pendingThemeRequestId,
+		themeId: selectedCustomThemeId,
+		name,
+		colors: normalizeAppearance(readAppearance()),
+		debug: themeSaveLogging,
+		timeoutMs: themeSaveTimeoutMs
+	});
+	armThemeRequestTimeout('save');
+	renderPaletteThemeControls();
+}
+
+function deletePaletteTheme() {
+	const preset = selectedCustomPreset();
+	if (!preset || themeSaving) return;
+	if (!window.confirm(t('paletteDeleteConfirm', { name: preset.name }))) return;
+	themeSaving = true;
+	themeStatusKey = 'paletteThemeSaving';
+	themeStatusError = false;
+	pendingThemeRequestId = nextThemeRequestId();
+	logThemeSave(pendingThemeRequestId, 'editor_send', { operation: 'delete', timeoutMs: themeSaveTimeoutMs });
+	send('dungeongen:theme-delete', {
+		requestId: pendingThemeRequestId,
+		themeId: preset.id,
+		debug: themeSaveLogging,
+		timeoutMs: themeSaveTimeoutMs
+	});
+	armThemeRequestTimeout('delete');
+	renderPaletteThemeControls();
+}
+
+function replaceHostTheme(theme) {
+	const themes = Array.isArray(hostState.customThemes) ? hostState.customThemes : [];
+	const exists = themes.some((item) => item?.id === theme.id);
+	hostState.customThemes = exists
+		? themes.map((item) => (item?.id === theme.id ? theme : item))
+		: [...themes, theme];
+}
+
+function handleThemeSaved(message) {
+	if (!pendingThemeRequestId || message.requestId !== pendingThemeRequestId || !message.theme) return;
+	logThemeSave(pendingThemeRequestId, 'editor_success', { operation: 'save' });
+	clearThemeRequestTimeout();
+	pendingThemeRequestId = '';
+	themeSaving = false;
+	replaceHostTheme(message.theme);
+	selectedCustomThemeId = message.theme.id;
+	elements.paletteName.value = message.theme.name;
+	themeStatusKey = 'paletteThemeSaved';
+	themeStatusError = false;
+	renderColorPresetOptions();
+	renderAll();
+}
+
+function handleThemeDeleted(message) {
+	if (!pendingThemeRequestId || message.requestId !== pendingThemeRequestId) return;
+	logThemeSave(pendingThemeRequestId, 'editor_success', { operation: 'delete' });
+	clearThemeRequestTimeout();
+	pendingThemeRequestId = '';
+	themeSaving = false;
+	hostState.customThemes = (hostState.customThemes ?? []).filter((theme) => theme?.id !== message.themeId);
+	selectedCustomThemeId = null;
+	setPaletteNameFromAppearance(readAppearance());
+	themeStatusKey = 'paletteThemeDeleted';
+	themeStatusError = false;
+	renderColorPresetOptions();
+	renderAll();
+}
+
+function handleThemeFailure(message, operation) {
+	if (!pendingThemeRequestId || message.requestId !== pendingThemeRequestId) return;
+	logThemeSave(pendingThemeRequestId, 'editor_failure', { operation, error: String(message.error ?? 'saveFailed') });
+	clearThemeRequestTimeout();
+	pendingThemeRequestId = '';
+	themeSaving = false;
+	themeStatusKey = themeErrorKey(String(message.error ?? ''), operation);
+	themeStatusError = true;
+	renderPaletteThemeControls();
+}
+
 elements.createProjectForm.addEventListener('submit', (event) => {
 	event.preventDefault();
 	const name = elements.newProjectName.value.trim() || t('productTitle');
@@ -2603,6 +2854,18 @@ elements.palettePresetButton.addEventListener('click', () => {
 	paletteMenuOpen = !paletteMenuOpen;
 	elements.palettePresetMenu.hidden = !paletteMenuOpen;
 	elements.palettePresetButton.setAttribute('aria-expanded', String(paletteMenuOpen));
+});
+elements.paletteSave.addEventListener('click', savePaletteTheme);
+elements.paletteDelete.addEventListener('click', deletePaletteTheme);
+elements.paletteName.addEventListener('input', () => {
+	themeStatusKey = '';
+	themeStatusError = false;
+	renderPaletteThemeControls();
+});
+elements.paletteName.addEventListener('keydown', (event) => {
+	if (event.key !== 'Enter') return;
+	event.preventDefault();
+	savePaletteTheme();
 });
 for (const input of Object.values(elements.colors)) input.addEventListener('input', () => {
 	syncColorPreset(readAppearance());
@@ -2639,7 +2902,10 @@ function handleMapImageLoad(event) {
 }
 elements.mapImage.addEventListener('load', handleMapImageLoad);
 elements.mapImageBuffer.addEventListener('load', handleMapImageLoad);
-elements.canvas.addEventListener('wheel', (event) => { event.preventDefault(); zoom(event.deltaY < 0 ? 1.1 : 1 / 1.1); }, { passive: false });
+elements.canvas.addEventListener('wheel', (event) => {
+	event.preventDefault();
+	zoom(event.deltaY < 0 ? 1.1 : 1 / 1.1, event.clientX, event.clientY);
+}, { passive: false });
 elements.canvas.addEventListener('pointerdown', (event) => {
 	if (activePanel === 'editing' && canEditMap() && event.button === 0) {
 		const cell = eventCell(event);
@@ -2819,6 +3085,10 @@ window.addEventListener('message', (event) => {
 		applyHostState({ ...event.data.state, theme: event.data.theme });
 	}
 	if (event.data.type === 'dungeongen:open') void openProject(event.data);
+	if (event.data.type === 'dungeongen:theme-saved') handleThemeSaved(event.data);
+	if (event.data.type === 'dungeongen:theme-deleted') handleThemeDeleted(event.data);
+	if (event.data.type === 'dungeongen:theme-save-failed') handleThemeFailure(event.data, 'save');
+	if (event.data.type === 'dungeongen:theme-delete-failed') handleThemeFailure(event.data, 'delete');
 });
 
 void Promise.all([loadEditorConfig(), loadColorPresets(), loadLocale(fallbackLocale)]).then(() => {

@@ -4,7 +4,7 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title></title>
-		<link rel="stylesheet" href="/dungeon-editor/editor.css?v=20260801-14" />
+		<link rel="stylesheet" href="/dungeon-editor/editor.css?v=20260801-17" />
 	</head>
 	<body>
 		<svg class="icon-symbols" aria-hidden="true">
@@ -55,8 +55,23 @@
 					<strong data-label="emptyTitle"></strong><span data-label="emptyText"></span>
 					<button id="openGeneration" class="ui-button primary" type="button"><svg><use href="#icon-sparkles"/></svg><span data-label="openGeneration"></span></button>
 				</div>
-				<div id="loading" class="canvas-loading" hidden>
-					<div class="loading-card"><svg class="spinner" aria-hidden="true"><use href="#icon-loader-circle"/></svg><strong id="loadingLabel" data-label="generating"></strong></div>
+				<div id="loading" class="app-image-loading-screen" role="status" aria-live="polite" data-label-aria="loadingScreenAria" hidden>
+					<div class="app-image-loading-stage" aria-hidden="true">
+						<span class="app-image-loading-spark" style="--spark-index: 0"></span>
+						<span class="app-image-loading-spark" style="--spark-index: 1"></span>
+						<span class="app-image-loading-spark" style="--spark-index: 2"></span>
+						<span class="app-image-loading-spark" style="--spark-index: 3"></span>
+						<span class="app-image-loading-spark" style="--spark-index: 4"></span>
+						<span class="app-image-loading-spark" style="--spark-index: 5"></span>
+						<span class="app-image-loading-spark" style="--spark-index: 6"></span>
+						<span class="app-image-loading-spark" style="--spark-index: 7"></span>
+						<img src="/dungeon-editor/loadscreen_small.png" alt="" width="240" height="240" decoding="async" />
+					</div>
+					<div class="app-image-loading-progress-row">
+						<progress id="loadingProgress" max="100" value="0" data-label-aria="loadingProgressLabel"></progress>
+						<output id="loadingProgressValue">0%</output>
+					</div>
+					<strong id="loadingLabel" class="app-image-loading-copy" data-label="generating"></strong>
 				</div>
 				<div class="canvas-controls" role="group" data-label-aria="viewControls">
 					<button id="zoomOut" class="canvas-control" type="button"><svg><use href="#icon-zoom-out"/></svg></button>
@@ -101,12 +116,12 @@
 
 					<section class="tool-view" data-tool-panel="generation">
 						<h2 data-label="generationTitle"></h2>
-						<label class="field"><span data-label="size"></span><select id="size"><option value="tiny" data-label="sizeTiny"></option><option value="small" data-label="sizeSmall"></option><option value="medium" data-label="sizeMedium"></option><option value="large" data-label="sizeLarge"></option><option value="xlarge" data-label="sizeXlarge"></option></select></label>
-						<label class="field"><span data-label="symmetry"></span><select id="symmetry"><option value="none" data-label="symmetryNone"></option><option value="bilateral" data-label="symmetryBilateral"></option></select></label>
-						<label class="field"><span data-label="connections"></span><select id="cross"><option value="none" data-label="none"></option><option value="low" data-label="low"></option><option value="med" data-label="medium"></option><option value="high" data-label="high"></option></select></label>
-						<label class="field"><span data-label="density"></span><select id="pack"><option value="sparse" data-label="sparse"></option><option value="normal" data-label="normal"></option><option value="tight" data-label="tight"></option></select></label>
-						<label class="field"><span data-label="roomSize"></span><select id="roomSize"><option value="cozy" data-label="cozy"></option><option value="mixed" data-label="mixed"></option><option value="grand" data-label="grand"></option></select></label>
-						<label class="field"><span data-label="water"></span><select id="water"><option value="dry" data-label="dry"></option><option value="puddles" data-label="puddles"></option><option value="pools" data-label="pools"></option><option value="lakes" data-label="lakes"></option><option value="flooded" data-label="flooded"></option></select></label>
+						<label class="field"><span data-label="size"></span><select id="size" class="app-select-native" hidden><option value="tiny" data-label="sizeTiny"></option><option value="small" data-label="sizeSmall"></option><option value="medium" data-label="sizeMedium"></option><option value="large" data-label="sizeLarge"></option><option value="xlarge" data-label="sizeXlarge"></option></select></label>
+						<label class="field"><span data-label="symmetry"></span><select id="symmetry" class="app-select-native" hidden><option value="none" data-label="symmetryNone"></option><option value="bilateral" data-label="symmetryBilateral"></option></select></label>
+						<label class="field"><span data-label="connections"></span><select id="cross" class="app-select-native" hidden><option value="none" data-label="none"></option><option value="low" data-label="low"></option><option value="med" data-label="medium"></option><option value="high" data-label="high"></option></select></label>
+						<label class="field"><span data-label="density"></span><select id="pack" class="app-select-native" hidden><option value="sparse" data-label="sparse"></option><option value="normal" data-label="normal"></option><option value="tight" data-label="tight"></option></select></label>
+						<label class="field"><span data-label="roomSize"></span><select id="roomSize" class="app-select-native" hidden><option value="cozy" data-label="cozy"></option><option value="mixed" data-label="mixed"></option><option value="grand" data-label="grand"></option></select></label>
+						<label class="field"><span data-label="water"></span><select id="water" class="app-select-native" hidden><option value="dry" data-label="dry"></option><option value="puddles" data-label="puddles"></option><option value="pools" data-label="pools"></option><option value="lakes" data-label="lakes"></option><option value="flooded" data-label="flooded"></option></select></label>
 						<label class="field"><span data-label="seed"></span><input id="seed" maxlength="128" data-label-placeholder="randomSeed" /></label>
 						<label class="check"><input id="roundRooms" type="checkbox"/><span data-label="roundRooms"></span></label>
 						<label class="check"><input id="halls" type="checkbox" checked/><span data-label="halls"></span></label>
@@ -203,6 +218,28 @@
 				</div>
 			</aside>
 		</div>
-		<script src="/dungeon-editor/editor.js?v=20260801-14" defer></script>
+
+		<div id="appToast" class="app-toast success" role="status" aria-live="polite" hidden>
+			<span></span>
+		</div>
+
+		<dialog id="renameProjectDialog" class="editor-dialog confirm-dialog">
+			<form id="renameProjectForm" class="dialog-card">
+				<header>
+					<h2 data-label="renameProjectTitle"></h2>
+					<button class="dialog-close" type="button" data-rename-close data-label-aria="close" aria-label="">×</button>
+				</header>
+				<label class="field">
+					<span data-label="projectName"></span>
+					<input id="renameProjectName" type="text" maxlength="128" required />
+				</label>
+				<div class="modal-actions">
+					<button class="ui-button" type="button" data-rename-close data-label="cancel"></button>
+					<button class="ui-button primary" type="submit" data-label="renameProjectConfirm"></button>
+				</div>
+			</form>
+		</dialog>
+
+		<script src="/dungeon-editor/editor.js?v=20260801-17" defer></script>
 	</body>
 </html>

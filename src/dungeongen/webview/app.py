@@ -181,6 +181,11 @@ def encoder_worker_js() -> Response:
     return _editor_response("encoder-worker.js", "application/javascript; charset=utf-8")
 
 
+@app.get("/dungeon-editor/loadscreen_small.png")
+def editor_loadscreen_image() -> Response:
+    return _editor_response("loadscreen_small.png", "image/png")
+
+
 @app.get("/dungeon-editor/palettes.json")
 def editor_palettes() -> Response:
     return _editor_response("palettes.json", "application/json; charset=utf-8")

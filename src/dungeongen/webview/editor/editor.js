@@ -1,5 +1,5 @@
 const fallbackLocale = 'ru';
-const editorAssetVersion = '20260801-14';
+const editorAssetVersion = '20260801-17';
 const defaultColorApplyDelayMs = 350;
 const defaultCanonicalRenderDelayMs = 10000;
 const defaultPreviewSizePixels = 48;
@@ -103,6 +103,9 @@ let paletteMenuOpen = false;
 let editPreviewFrame = 0;
 let queuedEditPreview = null;
 let placementObjectId = '';
+let renameProjectCandidate = null;
+let lastHostStatusCode = '';
+let toastTimer = 0;
 const placementIndexCache = { project: null, value: null };
 const encoderRequests = new Map();
 const pendingClassificationCells = new Set();
@@ -130,6 +133,8 @@ const elements = {
 	emptyWorkspace: document.getElementById('emptyWorkspace'),
 	loading: document.getElementById('loading'),
 	loadingLabel: document.getElementById('loadingLabel'),
+	loadingProgress: document.getElementById('loadingProgress'),
+	loadingProgressValue: document.getElementById('loadingProgressValue'),
 	projectTitle: document.getElementById('projectTitle'),
 	statusText: document.getElementById('statusText'),
 	projectList: document.getElementById('projectList'),
@@ -168,6 +173,10 @@ const elements = {
 	paletteSaveText: document.getElementById('paletteSaveText'),
 	paletteDelete: document.getElementById('paletteDelete'),
 	paletteStatus: document.getElementById('paletteStatus'),
+	appToast: document.getElementById('appToast'),
+	renameProjectDialog: document.getElementById('renameProjectDialog'),
+	renameProjectForm: document.getElementById('renameProjectForm'),
+	renameProjectName: document.getElementById('renameProjectName'),
 	fields: {
 		size: document.getElementById('size'),
 		symmetry: document.getElementById('symmetry'),
@@ -192,6 +201,283 @@ const elements = {
 		numbers: document.getElementById('colorNumbers')
 	}
 };
+
+
+const appSelectInstances = new Map();
+let openAppSelect = null;
+let appSelectSequence = 0;
+
+function appSelectAccessibleLabel(select) {
+	const field = select.closest('.field');
+	return field?.querySelector(':scope > span')?.textContent?.trim() || select.getAttribute('aria-label') || '—';
+}
+
+function firstEnabledAppSelectIndex(instance) {
+	return Array.from(instance.select.options).findIndex((option) => !option.disabled);
+}
+
+function lastEnabledAppSelectIndex(instance) {
+	const options = instance.select.options;
+	for (let index = options.length - 1; index >= 0; index -= 1) {
+		if (!options[index].disabled) return index;
+	}
+	return -1;
+}
+
+function selectedAppSelectIndex(instance) {
+	const index = instance.select.selectedIndex;
+	return index >= 0 && !instance.select.options[index]?.disabled ? index : firstEnabledAppSelectIndex(instance);
+}
+
+function positionAppSelectMenu(instance) {
+	if (openAppSelect !== instance || instance.menu.hidden || !instance.trigger.isConnected) return;
+	const gap = 7;
+	const margin = 12;
+	const anchorRect = instance.trigger.getBoundingClientRect();
+	const viewportWidth = document.documentElement.clientWidth;
+	const viewportHeight = document.documentElement.clientHeight;
+	const maximumWidth = Math.max(0, viewportWidth - margin * 2);
+	instance.menu.dataset.floatingPositioned = 'false';
+	instance.menu.style.width = 'max-content';
+	instance.menu.style.minWidth = `${Math.min(anchorRect.width, maximumWidth)}px`;
+	instance.menu.style.maxWidth = `${maximumWidth}px`;
+	const menuRect = instance.menu.getBoundingClientRect();
+	const left = Math.min(
+		Math.max(anchorRect.left, margin),
+		Math.max(margin, viewportWidth - menuRect.width - margin)
+	);
+	const availableBelow = Math.max(0, viewportHeight - anchorRect.bottom - gap - margin);
+	const availableAbove = Math.max(0, anchorRect.top - gap - margin);
+	const placeBelow = availableBelow >= menuRect.height || availableBelow >= availableAbove;
+	const availableHeight = Math.max(placeBelow ? availableBelow : availableAbove, 80);
+	const visibleHeight = Math.min(menuRect.height, availableHeight);
+	const top = placeBelow
+		? anchorRect.bottom + gap
+		: Math.max(margin, anchorRect.top - gap - visibleHeight);
+	instance.menu.style.left = `${Math.round(left)}px`;
+	instance.menu.style.top = `${Math.round(top)}px`;
+	instance.menu.style.setProperty('--floating-available-height', `${Math.floor(availableHeight)}px`);
+	instance.menu.dataset.placement = placeBelow ? 'bottom' : 'top';
+	instance.menu.dataset.floatingPositioned = 'true';
+}
+
+function scrollAppSelectHighlightIntoView(instance) {
+	requestAnimationFrame(() => {
+		instance.menu.querySelector(`[data-option-index="${instance.highlightedIndex}"]`)
+			?.scrollIntoView({ block: 'nearest' });
+	});
+}
+
+function updateAppSelectOptionState(instance) {
+	instance.menu.querySelectorAll('.app-select-option').forEach((button) => {
+		const index = Number(button.dataset.optionIndex);
+		const selected = index === instance.select.selectedIndex;
+		button.classList.toggle('selected', selected);
+		button.classList.toggle('highlighted', index === instance.highlightedIndex);
+		button.setAttribute('aria-selected', String(selected));
+	});
+	instance.trigger.setAttribute(
+		'aria-activedescendant',
+		openAppSelect === instance && instance.highlightedIndex >= 0
+			? `${instance.id}-option-${instance.highlightedIndex}`
+			: ''
+	);
+}
+
+function renderAppSelectOptions(instance) {
+	instance.menu.replaceChildren();
+	Array.from(instance.select.options).forEach((option, index) => {
+		const button = document.createElement('button');
+		button.className = 'app-select-option';
+		button.id = `${instance.id}-option-${index}`;
+		button.dataset.optionIndex = String(index);
+		button.type = 'button';
+		button.setAttribute('role', 'option');
+		button.disabled = option.disabled;
+		button.textContent = option.textContent?.trim() || option.value;
+		button.addEventListener('mouseenter', () => {
+			if (option.disabled) return;
+			instance.highlightedIndex = index;
+			updateAppSelectOptionState(instance);
+		});
+		button.addEventListener('click', () => chooseAppSelectOption(instance, index));
+		instance.menu.append(button);
+	});
+	updateAppSelectOptionState(instance);
+}
+
+function syncAppSelect(instance) {
+	const selected = instance.select.selectedOptions[0] ?? instance.select.options[0];
+	instance.value.textContent = selected?.textContent?.trim() || '—';
+	instance.trigger.disabled = instance.select.disabled || instance.select.options.length === 0;
+	const accessibleLabel = appSelectAccessibleLabel(instance.select);
+	instance.trigger.setAttribute('aria-label', accessibleLabel);
+	instance.menu.setAttribute('aria-label', accessibleLabel);
+	if (openAppSelect === instance) {
+		if (instance.highlightedIndex < 0 || instance.select.options[instance.highlightedIndex]?.disabled) {
+			instance.highlightedIndex = selectedAppSelectIndex(instance);
+		}
+		renderAppSelectOptions(instance);
+		requestAnimationFrame(() => positionAppSelectMenu(instance));
+	}
+}
+
+function syncAppSelects() {
+	for (const instance of appSelectInstances.values()) syncAppSelect(instance);
+}
+
+function closeAppSelect(instance = openAppSelect, { restoreFocus = false } = {}) {
+	if (!instance) return;
+	instance.root.classList.remove('open');
+	instance.trigger.setAttribute('aria-expanded', 'false');
+	instance.trigger.removeAttribute('aria-activedescendant');
+	instance.menu.hidden = true;
+	instance.menu.dataset.floatingPositioned = 'false';
+	if (openAppSelect === instance) openAppSelect = null;
+	if (restoreFocus) instance.trigger.focus();
+}
+
+function openAppSelectMenu(instance) {
+	if (instance.trigger.disabled || instance.select.options.length === 0) return;
+	if (openAppSelect && openAppSelect !== instance) closeAppSelect(openAppSelect);
+	openAppSelect = instance;
+	instance.highlightedIndex = selectedAppSelectIndex(instance);
+	instance.root.classList.add('open');
+	instance.trigger.setAttribute('aria-expanded', 'true');
+	instance.menu.hidden = false;
+	renderAppSelectOptions(instance);
+	requestAnimationFrame(() => {
+		positionAppSelectMenu(instance);
+		scrollAppSelectHighlightIntoView(instance);
+	});
+}
+
+function toggleAppSelect(instance) {
+	if (openAppSelect === instance) closeAppSelect(instance);
+	else openAppSelectMenu(instance);
+}
+
+function chooseAppSelectOption(instance, index) {
+	const option = instance.select.options[index];
+	if (!option || option.disabled || instance.select.disabled) return;
+	const changed = instance.select.value !== option.value;
+	instance.select.value = option.value;
+	instance.highlightedIndex = index;
+	syncAppSelect(instance);
+	closeAppSelect(instance, { restoreFocus: true });
+	if (changed) {
+		instance.select.dispatchEvent(new Event('input', { bubbles: true }));
+		instance.select.dispatchEvent(new Event('change', { bubbles: true }));
+	}
+}
+
+function moveAppSelectHighlight(instance, direction) {
+	const options = instance.select.options;
+	if (options.length === 0) return;
+	let nextIndex = instance.highlightedIndex;
+	for (let step = 0; step < options.length; step += 1) {
+		nextIndex = (nextIndex + direction + options.length) % options.length;
+		if (!options[nextIndex].disabled) {
+			instance.highlightedIndex = nextIndex;
+			updateAppSelectOptionState(instance);
+			scrollAppSelectHighlightIntoView(instance);
+			return;
+		}
+	}
+}
+
+function handleAppSelectKeydown(instance, event) {
+	if (instance.trigger.disabled) return;
+	switch (event.key) {
+		case 'ArrowDown':
+			event.preventDefault();
+			event.stopPropagation();
+			if (openAppSelect !== instance) openAppSelectMenu(instance);
+			else moveAppSelectHighlight(instance, 1);
+			break;
+		case 'ArrowUp':
+			event.preventDefault();
+			event.stopPropagation();
+			if (openAppSelect !== instance) openAppSelectMenu(instance);
+			else moveAppSelectHighlight(instance, -1);
+			break;
+		case 'Home':
+			if (openAppSelect !== instance) return;
+			event.preventDefault();
+			event.stopPropagation();
+			instance.highlightedIndex = firstEnabledAppSelectIndex(instance);
+			updateAppSelectOptionState(instance);
+			scrollAppSelectHighlightIntoView(instance);
+			break;
+		case 'End':
+			if (openAppSelect !== instance) return;
+			event.preventDefault();
+			event.stopPropagation();
+			instance.highlightedIndex = lastEnabledAppSelectIndex(instance);
+			updateAppSelectOptionState(instance);
+			scrollAppSelectHighlightIntoView(instance);
+			break;
+		case 'Enter':
+		case ' ':
+			event.preventDefault();
+			event.stopPropagation();
+			if (openAppSelect !== instance) openAppSelectMenu(instance);
+			else if (instance.highlightedIndex >= 0) chooseAppSelectOption(instance, instance.highlightedIndex);
+			break;
+		case 'Escape':
+			if (openAppSelect !== instance) return;
+			event.preventDefault();
+			event.stopPropagation();
+			closeAppSelect(instance);
+			break;
+		case 'Tab':
+			if (openAppSelect === instance) closeAppSelect(instance);
+			break;
+	}
+}
+
+function initializeAppSelect(select) {
+	if (!(select instanceof HTMLSelectElement) || appSelectInstances.has(select)) return;
+	const id = `app-select-${select.id || ++appSelectSequence}`;
+	const root = document.createElement('div');
+	root.className = 'app-select';
+	root.dataset.selectFor = select.id;
+	const trigger = document.createElement('button');
+	trigger.className = 'app-select-trigger';
+	trigger.type = 'button';
+	trigger.setAttribute('role', 'combobox');
+	trigger.setAttribute('aria-haspopup', 'listbox');
+	trigger.setAttribute('aria-expanded', 'false');
+	trigger.setAttribute('aria-controls', `${id}-listbox`);
+	const value = document.createElement('span');
+	value.className = 'app-select-value';
+	const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+	chevron.classList.add('app-select-chevron');
+	chevron.setAttribute('aria-hidden', 'true');
+	const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+	use.setAttribute('href', '#icon-chevron-down');
+	chevron.append(use);
+	trigger.append(value, chevron);
+	root.append(trigger);
+	select.insertAdjacentElement('afterend', root);
+	const menu = document.createElement('div');
+	menu.className = 'app-select-menu';
+	menu.id = `${id}-listbox`;
+	menu.setAttribute('role', 'listbox');
+	menu.dataset.floatingPositioned = 'false';
+	menu.hidden = true;
+	document.body.append(menu);
+	const instance = { id, select, root, trigger, value, menu, highlightedIndex: -1 };
+	appSelectInstances.set(select, instance);
+	trigger.addEventListener('click', () => toggleAppSelect(instance));
+	trigger.addEventListener('keydown', (event) => handleAppSelectKeydown(instance, event));
+	select.addEventListener('change', () => syncAppSelect(instance));
+	syncAppSelect(instance);
+}
+
+function initializeAppSelects() {
+	document.querySelectorAll('.field select').forEach(initializeAppSelect);
+}
 
 function t(key, params = {}) {
 	let value = labels[key] ?? key;
@@ -345,6 +631,7 @@ function applyLabels() {
 	setControlLabel(elements.redoEdit, t('redo'));
 	elements.createProjectForm.querySelector('button').setAttribute('aria-label', t('createProject'));
 	renderColorPresetOptions();
+	syncAppSelects();
 	renderEditingTool();
 }
 
@@ -507,6 +794,39 @@ function statusLabel() {
 		loadingProject: 'statusLoading', saving: 'statusSaving', saved: 'statusSaved',
 		exporting: 'statusExporting', exported: 'statusExported'
 	}[hostState.statusCode] ?? 'statusReady');
+}
+
+function showToast(text) {
+	if (!text || !elements.appToast) return;
+	elements.appToast.querySelector('span').textContent = text;
+	elements.appToast.hidden = false;
+	clearTimeout(toastTimer);
+	toastTimer = window.setTimeout(() => { elements.appToast.hidden = true; }, 3200);
+}
+
+function syncHostToast() {
+	const statusCode = String(hostState.statusCode ?? '');
+	if (!statusCode) {
+		lastHostStatusCode = '';
+		return;
+	}
+	if (statusCode === lastHostStatusCode) return;
+	lastHostStatusCode = statusCode;
+	if (statusCode === 'saved') showToast(t('statusSaved'));
+	if (statusCode === 'exported') showToast(t('statusExported'));
+}
+
+function openRenameProjectDialog(project) {
+	renameProjectCandidate = project;
+	elements.renameProjectName.value = project.name;
+	elements.renameProjectDialog.showModal();
+	elements.renameProjectName.focus();
+	elements.renameProjectName.select();
+}
+
+function closeRenameProjectDialog() {
+	renameProjectCandidate = null;
+	if (elements.renameProjectDialog.open) elements.renameProjectDialog.close();
 }
 
 function normalizeAppearance(value) {
@@ -864,6 +1184,7 @@ function canEditMap() {
 function renderAll() {
 	elements.projectTitle.textContent = currentProjectName || t('productTitle');
 	elements.statusText.textContent = statusLabel();
+	syncHostToast();
 	elements.sourceLink.href = hostState.sourceCodeURL || '#';
 	elements.sourceLink.hidden = !hostState.sourceCodeURL;
 	elements.generateButton.disabled = !currentProjectId || generating || Boolean(hostState.loading);
@@ -942,15 +1263,13 @@ function renderProjects() {
 		actions.className = 'project-actions';
 		const rename = document.createElement('button');
 		rename.type = 'button';
+		rename.className = 'ui-button icon-only project-rename';
 		rename.innerHTML = icon('pencil');
-		setControlLabel(rename, t('renameProject'));
-		rename.addEventListener('click', () => {
-			const next = window.prompt(t('renamePrompt'), project.name)?.trim();
-			if (next && next !== project.name) send('dungeongen:project-rename', { projectId: project.id, name: next });
-		});
+		setControlLabel(rename, `${t('renameProject')}: ${project.name}`);
+		rename.addEventListener('click', () => openRenameProjectDialog(project));
 		const remove = document.createElement('button');
 		remove.type = 'button';
-		remove.className = 'danger';
+		remove.className = 'ui-button danger icon-only project-delete';
 		remove.innerHTML = icon('trash');
 		setControlLabel(remove, t('deleteProject'));
 		remove.addEventListener('click', () => {
@@ -1006,6 +1325,7 @@ function writeParameters(parameters = {}) {
 	elements.fields.roundRooms.checked = parameters.roundRooms === true;
 	elements.fields.halls.checked = parameters.halls !== false;
 	elements.fields.showNumbers.checked = parameters.showNumbers !== false;
+	syncAppSelects();
 }
 
 function workspaceDimensions() {
@@ -2463,6 +2783,53 @@ async function commitStructure(operation) {
 	timing('browser_total', performance.now() - totalStartedAt);
 }
 
+let loadingProgress = 0;
+let loadingStartedAt = 0;
+let loadingCycle = 0;
+let loadingHideTimer = null;
+let generationProgressTimer = null;
+
+function setLoadingProgress(value) {
+	loadingProgress = Math.max(loadingProgress, Math.max(0, Math.min(100, Math.round(value))));
+	elements.loadingProgress.value = loadingProgress;
+	elements.loadingProgressValue.textContent = `${loadingProgress}%`;
+}
+
+function showLoading(labelKey, progress = 0) {
+	if (loadingHideTimer) clearTimeout(loadingHideTimer);
+	loadingCycle += 1;
+	loadingStartedAt = performance.now();
+	loadingProgress = 0;
+	elements.loadingLabel.textContent = t(labelKey);
+	setLoadingProgress(progress);
+	elements.loading.hidden = false;
+}
+
+function hideLoading() {
+	const cycle = loadingCycle;
+	setLoadingProgress(100);
+	const minimumVisible = Math.max(0, 420 - (performance.now() - loadingStartedAt));
+	if (loadingHideTimer) clearTimeout(loadingHideTimer);
+	loadingHideTimer = setTimeout(() => {
+		if (cycle === loadingCycle) elements.loading.hidden = true;
+	}, Math.max(180, minimumVisible));
+}
+
+function startGenerationProgress() {
+	if (generationProgressTimer) clearInterval(generationProgressTimer);
+	generationProgressTimer = setInterval(() => {
+		if (loadingProgress >= 68) return;
+		const increment = loadingProgress < 30 ? 3 : loadingProgress < 50 ? 2 : 1;
+		setLoadingProgress(Math.min(68, loadingProgress + increment));
+	}, 280);
+}
+
+function stopGenerationProgress() {
+	if (!generationProgressTimer) return;
+	clearInterval(generationProgressTimer);
+	generationProgressTimer = null;
+}
+
 async function initializeProjectStructure() {
 	if (!capability || !currentProjectId || !currentProject?.renderSvg || !currentProject?.layout || editing) return;
 	const needsStructure = !currentProject.structure;
@@ -2472,8 +2839,8 @@ async function initializeProjectStructure() {
 	const project = cloneProject();
 	editing = true;
 	localStatus = 'statusEditing';
-	elements.loadingLabel.textContent = t('preparingEditor');
-	elements.loading.hidden = false;
+	showLoading('preparingEditor', 12);
+	setLoadingProgress(36);
 	renderAll();
 	try {
 		const response = await fetch('/dungeon-editor/api/edit', {
@@ -2500,12 +2867,12 @@ async function initializeProjectStructure() {
 		void persistWorkingDraft();
 		localStatus = 'statusUnsaved';
 		await checkpointWorkingCopy();
+		setLoadingProgress(98);
 	} catch {
 		if (currentProjectId === projectId) localStatus = 'errorEditFailed';
 	} finally {
 		editing = false;
-		elements.loadingLabel.textContent = t('generating');
-		elements.loading.hidden = true;
+		hideLoading();
 		renderAll();
 		if (currentProjectId === projectId && needsStructure) void initializeProjectStructure();
 		else if (structureNeedsRender()) scheduleCanonicalRender();
@@ -2526,7 +2893,8 @@ async function generate() {
 	pendingAppearanceSnapshot = null;
 	generating = true;
 	localStatus = 'statusGenerating';
-	elements.loading.hidden = false;
+	showLoading('generating', 4);
+	startGenerationProgress();
 	renderAll();
 	try {
 		const response = await fetch('/api/dungeongen/editor/generate', {
@@ -2536,8 +2904,10 @@ async function generate() {
 			},
 			body: JSON.stringify({ parameters: readParameters(), deferRender: true })
 		});
+		setLoadingProgress(72);
 		const payload = await response.json().catch(() => null);
 		if (!response.ok || !payload?.success) throw new Error(payload?.error ?? 'generationFailed');
+		setLoadingProgress(78);
 		const previousClientRevision = Number(currentProject?.clientRevision ?? 0);
 		currentProject = {
 			...payload.project,
@@ -2548,19 +2918,23 @@ async function generate() {
 		else setRenderedDecorationObjects(currentProject);
 		writeParameters(currentProject.parameters);
 		writeAppearance(currentProject.appearance);
+		setLoadingProgress(84);
 		workingCopyDirty = true;
 		void persistWorkingDraft();
 		setProjectImage(currentProject.renderSvg);
 		resetHistory();
 		fitMap();
+		setLoadingProgress(92);
 		localStatus = 'statusSaving';
 		renderAll();
 		await checkpointWorkingCopy();
+		setLoadingProgress(98);
 	} catch {
 		localStatus = 'errorGenerationFailed';
 	} finally {
+		stopGenerationProgress();
 		generating = false;
-		elements.loading.hidden = true;
+		hideLoading();
 		renderAll();
 		if (structureNeedsRender()) scheduleCanonicalRender();
 	}
@@ -2579,6 +2953,7 @@ async function openProject(message) {
 	pendingHostSaveRevision = null;
 	renderEditPreview();
 	localStatus = 'statusLoading';
+	showLoading('statusLoading', 8);
 	currentProjectId = String(message.projectId ?? '');
 	const openingProjectId = currentProjectId;
 	currentProjectName = String(message.name ?? '');
@@ -2586,6 +2961,7 @@ async function openProject(message) {
 		const serverProject = message.projectData && typeof message.projectData === 'object'
 			? cloneProject(message.projectData)
 			: JSON.parse(base64ToUtf8(String(message.projectBase64 ?? '')));
+		setLoadingProgress(38);
 		setRenderedDecorationObjects(serverProject);
 		currentProject = serverProject;
 		const draft = await readWorkingDraft(currentProjectId);
@@ -2601,10 +2977,12 @@ async function openProject(message) {
 			void deleteWorkingDraft(currentProjectId);
 		}
 		refreshPendingDecorationObjects();
+		setLoadingProgress(68);
 		currentProject.appearance = normalizeAppearance(currentProject.appearance);
 		writeParameters(currentProject.parameters);
 		writeAppearance(currentProject.appearance);
 		setProjectImage(currentProject.renderSvg);
+		setLoadingProgress(92);
 		if (!workingCopyDirty) localStatus = '';
 	} catch {
 		currentProject = null;
@@ -2614,6 +2992,7 @@ async function openProject(message) {
 		localStatus = 'errorGeneric';
 	}
 	renderAll();
+	hideLoading();
 	if (currentProject?.structure) fitMap();
 	void initializeProjectStructure();
 	if (workingCopyDirty) scheduleWorkingCopyCheckpoint();
@@ -2845,6 +3224,21 @@ elements.createProjectForm.addEventListener('submit', (event) => {
 	void checkpointWorkingCopy().then(() => send('dungeongen:project-create', { name }));
 	elements.newProjectName.value = '';
 });
+elements.renameProjectForm.addEventListener('submit', (event) => {
+	event.preventDefault();
+	const project = renameProjectCandidate;
+	const name = elements.renameProjectName.value.trim();
+	if (!project || !name) return;
+	if (name !== project.name) send('dungeongen:project-rename', { projectId: project.id, name });
+	closeRenameProjectDialog();
+});
+document.querySelectorAll('[data-rename-close]').forEach((button) => {
+	button.addEventListener('click', closeRenameProjectDialog);
+});
+elements.renameProjectDialog.addEventListener('close', () => { renameProjectCandidate = null; });
+elements.renameProjectDialog.addEventListener('click', (event) => {
+	if (event.target === elements.renameProjectDialog) closeRenameProjectDialog();
+});
 elements.generateButton.addEventListener('click', generate);
 elements.openGeneration.addEventListener('click', () => activateTool('generation'));
 elements.structureTab.addEventListener('click', () => void setWorkspaceView('structure'));
@@ -3035,7 +3429,7 @@ document.addEventListener('keydown', async (event) => {
 		elements.palettePresetButton.focus();
 		return;
 	}
-	if (target instanceof HTMLElement && (target.matches('textarea, select, input:not([type="color"])') || target.isContentEditable)) return;
+	if (target instanceof HTMLElement && (target.matches('textarea, select, input:not([type="color"]), .app-select-trigger, .app-select-option') || target.isContentEditable)) return;
 	if ((event.ctrlKey || event.metaKey) && !event.altKey && event.code === 'KeyS') {
 		event.preventDefault();
 		if (appearanceUpdateTimer) {
@@ -3067,6 +3461,14 @@ document.addEventListener('keydown', async (event) => {
 	else await undoEdit();
 });
 document.addEventListener('pointerdown', (event) => {
+	if (!openAppSelect) return;
+	if (openAppSelect.root.contains(event.target) || openAppSelect.menu.contains(event.target)) return;
+	closeAppSelect(openAppSelect);
+});
+document.addEventListener('scroll', () => openAppSelect && positionAppSelectMenu(openAppSelect), true);
+window.addEventListener('resize', () => openAppSelect && positionAppSelectMenu(openAppSelect));
+
+document.addEventListener('pointerdown', (event) => {
 	if (paletteMenuOpen && !elements.palettePresetButton.contains(event.target) && !elements.palettePresetMenu.contains(event.target)) {
 		closeColorPresetMenu();
 	}
@@ -3092,6 +3494,7 @@ window.addEventListener('message', (event) => {
 });
 
 void Promise.all([loadEditorConfig(), loadColorPresets(), loadLocale(fallbackLocale)]).then(() => {
+	initializeAppSelects();
 	renderColorPresetOptions();
 	if (periodicCheckpointTimer) clearInterval(periodicCheckpointTimer);
 	periodicCheckpointTimer = setInterval(() => { if (workingCopyDirty) void checkpointWorkingCopy(); }, workingCopyIntervalMs);

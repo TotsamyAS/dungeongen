@@ -31,6 +31,11 @@
 	"createProject": "Создать проект",
 	"noProjects": "Проектов пока нет.",
 	"renameProject": "Переименовать проект",
+	"renameProjectTitle": "Переименовать проект",
+	"projectName": "Название проекта",
+	"renameProjectConfirm": "Переименовать",
+	"cancel": "Отмена",
+	"close": "Закрыть",
 	"renamePrompt": "Новое название проекта",
 	"deleteProject": "Удалить проект",
 	"deleteConfirm": "Удалить проект «{name}»? Это действие нельзя отменить.",
@@ -202,5 +207,7 @@
 	"gigabytes": "{value} ГБ",
 	"zoomIn": "Увеличить",
 	"zoomOut": "Уменьшить",
-	"fit": "Вписать карту"
+	"fit": "Вписать карту",
+	"loadingScreenAria": "Загрузка проекта подземелья",
+	"loadingProgressLabel": "Прогресс подготовки подземелья"
 }

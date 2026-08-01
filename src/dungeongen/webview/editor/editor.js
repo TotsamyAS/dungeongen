@@ -1,5 +1,5 @@
 const fallbackLocale = 'ru';
-const editorAssetVersion = '20260801-11';
+const editorAssetVersion = '20260801-12';
 const defaultColorApplyDelayMs = 350;
 const defaultCanonicalRenderDelayMs = 10000;
 const defaultPreviewSizePixels = 48;
@@ -83,6 +83,8 @@ let checkpointPromise = null;
 let periodicCheckpointTimer = null;
 let pendingHostSaveRevision = null;
 let draftDatabasePromise = null;
+let draftPersistTimer = null;
+let draftPersistIdleHandle = 0;
 let fastMode = false;
 let workspaceView = 'preview';
 let objectRotation = 0;
@@ -95,6 +97,8 @@ let placementObjectId = '';
 const placementIndexCache = { project: null, value: null };
 const encoderRequests = new Map();
 const pendingClassificationCells = new Set();
+const pendingDecorationObjectIds = new Set();
+const renderedDecorationObjectIds = new Set();
 const editToolTooltip = document.createElement('div');
 editToolTooltip.className = 'edit-tool-tooltip';
 editToolTooltip.id = 'editToolTooltip';
@@ -605,6 +609,27 @@ function persistWorkingDraft() {
 	}));
 }
 
+function cancelScheduledDraftPersist() {
+	if (draftPersistTimer) clearTimeout(draftPersistTimer);
+	draftPersistTimer = null;
+	if (draftPersistIdleHandle && typeof cancelIdleCallback === 'function') cancelIdleCallback(draftPersistIdleHandle);
+	draftPersistIdleHandle = 0;
+}
+
+function scheduleWorkingDraftPersist() {
+	cancelScheduledDraftPersist();
+	draftPersistTimer = setTimeout(() => {
+		draftPersistTimer = null;
+		const persist = () => {
+			draftPersistIdleHandle = 0;
+			if (workingCopyDirty) void persistWorkingDraft();
+		};
+		if (typeof requestIdleCallback === 'function') {
+			draftPersistIdleHandle = requestIdleCallback(persist, { timeout: 1500 });
+		} else persist();
+	}, 250);
+}
+
 function readWorkingDraft(projectId) {
 	return draftTransaction('readonly', (store) => store.get(projectId));
 }
@@ -621,11 +646,11 @@ function scheduleWorkingCopyCheckpoint() {
 	}, workingCopyIdleSaveMs);
 }
 
-function markWorkingCopyDirty() {
+function markWorkingCopyDirty(canonicalDelay = canonicalRenderDelayMs) {
 	workingCopyDirty = true;
-	void persistWorkingDraft();
+	scheduleWorkingDraftPersist();
 	scheduleWorkingCopyCheckpoint();
-	if (!fastMode) scheduleCanonicalRender();
+	if (!fastMode) scheduleCanonicalRender(canonicalDelay);
 }
 
 async function checkpointWorkingCopy() {
@@ -676,6 +701,7 @@ function acknowledgeHostSave() {
 		pendingHostSaveRevision = null;
 		if (checkpointTimer) clearTimeout(checkpointTimer);
 		checkpointTimer = null;
+		cancelScheduledDraftPersist();
 		void deleteWorkingDraft(currentProjectId);
 	} else {
 		pendingHostSaveRevision = null;
@@ -1167,6 +1193,60 @@ function renderLightweightMap() {
 	}
 }
 
+function removeLightweightObject(objectId) {
+	const id = String(objectId ?? '');
+	for (const element of elements.structureMap.querySelectorAll('[data-object-id]')) {
+		if (element.getAttribute('data-object-id') === id) element.remove();
+	}
+}
+
+function updateLightweightDecoration(operation) {
+	if (elements.structureMap.hasAttribute('hidden') || !elements.structureMap.childElementCount) return;
+	if (operation.type === 'eraseObject') {
+		removeLightweightObject(operation.id);
+		return;
+	}
+	if (operation.type !== 'placeObject') return;
+	if (propTools.has(operation.objectType)) {
+		const object = (currentProject?.structure?.objects ?? []).find((item) => item.id === operation.objectId);
+		if (object) appendLightweightObject(elements.structureMap, object);
+		return;
+	}
+	const definition = layoutObjectDefinitions[operation.objectType];
+	if (!definition) return;
+	const [collection] = definition;
+	const item = (currentProject?.layout?.[collection] ?? []).find((value) => value.id === operation.objectId);
+	if (item) appendLightweightLayoutObject(elements.structureMap, collection, item);
+}
+
+function updatePendingDecorationOverlay(operation) {
+	if (elements.structureOverlay.hasAttribute('hidden')) return;
+	const id = String(operation.type === 'placeObject' ? operation.objectId : operation.id);
+	for (const element of elements.structureOverlay.querySelectorAll('[data-object-id]')) {
+		if (element.getAttribute('data-object-id') === id) element.remove();
+	}
+	if (operation.type !== 'placeObject' || !pendingDecorationObjectIds.has(id)) return;
+	if (propTools.has(operation.objectType)) {
+		const object = (currentProject?.structure?.objects ?? []).find((item) => String(item.id) === id);
+		if (object) appendLightweightObject(elements.structureOverlay, object, 'structure-pending-decoration');
+		return;
+	}
+	const definition = layoutObjectDefinitions[operation.objectType];
+	if (!definition) return;
+	const [collection] = definition;
+	const item = (currentProject?.layout?.[collection] ?? []).find((value) => String(value.id) === id);
+	if (item) appendLightweightLayoutObject(elements.structureOverlay, collection, item, 'structure-pending-decoration');
+}
+
+function renderDecorationCommitState(operation) {
+	updateLightweightDecoration(operation);
+	updatePendingDecorationOverlay(operation);
+	elements.statusText.textContent = statusLabel();
+	elements.undoEdit.disabled = !undoStack.length || generating || editing;
+	elements.redoEdit.disabled = !redoStack.length || generating || editing;
+	renderStats();
+}
+
 function renderWorkspace() {
 	const hasReadyImage = Boolean(currentImageUrl && elements.mapImage.src);
 	const structureActive = Boolean(
@@ -1425,6 +1505,30 @@ function placementIndex() {
 	return value;
 }
 
+function reusePlacementIndexAfterDecoration(previousProject, nextProject) {
+	if (placementIndexCache.project !== previousProject || !placementIndexCache.value) return;
+	const index = placementIndexCache.value;
+	index.occupied = new Set();
+	index.propAt = new Map();
+	for (const object of nextProject?.structure?.objects ?? []) {
+		for (const cell of object.cells ?? []) {
+			const key = cellKey(cell);
+			index.propAt.set(key, { targetKind: 'prop', id: object.id, cells: object.cells });
+			if (!object.type.startsWith('rock_')) index.occupied.add(key);
+		}
+	}
+	index.layoutAt = new Map();
+	for (const [collection, kind] of [['doors', 'door'], ['stairs', 'stairs'], ['exits', 'exit']]) {
+		for (const item of nextProject?.layout?.[collection] ?? []) {
+			const key = cellKey([item.x, item.y]);
+			const matches = index.layoutAt.get(key) ?? [];
+			matches.push({ targetKind: kind, id: item.id, cells: [[item.x, item.y]] });
+			index.layoutAt.set(key, matches);
+		}
+	}
+	placementIndexCache.project = nextProject;
+}
+
 function layoutItemsAt(cell, index = placementIndex()) {
 	return index.layoutAt.get(cellKey(cell)) ?? [];
 }
@@ -1649,7 +1753,89 @@ function reclassifyLocal(structure) {
 	structure.nextRoomNumber = nextRoomNumber(structure.rooms);
 }
 
+function isDecorationOperation(operation) {
+	return operation?.type === 'placeObject'
+		|| (operation?.type === 'eraseObject' && operation.targetKind !== 'water');
+}
+
+function nextProjectStats(project, structure, layout) {
+	return {
+		...(project.stats ?? {}),
+		rooms: (structure.rooms ?? []).filter((room) => !room.suppressed).length,
+		doors: layout.doors?.length ?? 0,
+		stairs: layout.stairs?.length ?? 0,
+		exits: layout.exits?.length ?? 0
+	};
+}
+
+function applyLocalDecorationOperation(project, operation) {
+	const structure = project?.structure;
+	const layout = project?.layout;
+	if (!structure || !layout) return null;
+	let nextStructure = structure;
+	let nextLayout = layout;
+
+	if (operation.type === 'placeObject') {
+		const cells = objectFootprint(operation.objectType, operation.cell, operation.rotation);
+		if (propTools.has(operation.objectType)) {
+			const centered = ['fountain', 'column_round', 'column_square', 'rock_small', 'rock_medium', 'rock_large'].includes(operation.objectType);
+			const descriptor = {
+				id: operation.objectId || localId('manual'), type: operation.objectType,
+				x: operation.cell[0] + (centered ? .5 : 0), y: operation.cell[1] + (centered ? .5 : 0),
+				rotation: operation.rotation, source: 'manual', cells
+			};
+			if (operation.objectType.startsWith('rock_')) {
+				descriptor.size = Number(operation.size) || defaultRockSize(operation.objectType);
+				descriptor.shape = Array.isArray(operation.shape)
+					? operation.shape
+					: rockShapePoints(descriptor).map((point) => point.map((value) => value / cellSize));
+			}
+			nextStructure = { ...structure, objects: [...(structure.objects ?? []), descriptor] };
+		} else {
+			const definition = layoutObjectDefinitions[operation.objectType];
+			if (!definition) return null;
+			const direction = ['north', 'east', 'south', 'west'][operation.rotation];
+			const [collection, type] = definition;
+			const item = {
+				id: operation.objectId || localId('manual'), x: operation.cell[0], y: operation.cell[1],
+				direction, type, manual: true
+			};
+			if (collection === 'doors') Object.assign(item, { roomId: '', passageId: '' });
+			if (collection === 'stairs') item.passageId = '';
+			if (collection === 'exits') Object.assign(item, { roomId: '', main: operation.objectType === 'entrance' });
+			nextLayout = { ...layout, [collection]: [...(layout[collection] ?? []), item] };
+		}
+	} else if (operation.type === 'eraseObject') {
+		if (operation.targetKind === 'prop') {
+			nextStructure = {
+				...structure,
+				objects: (structure.objects ?? []).filter((item) => item.id !== operation.id)
+			};
+		} else {
+			const collection = { door: 'doors', stairs: 'stairs', exit: 'exits' }[operation.targetKind];
+			if (!collection) return null;
+			nextLayout = {
+				...layout,
+				[collection]: (layout[collection] ?? []).filter((item) => item.id !== operation.id)
+			};
+		}
+	} else return null;
+
+	nextStructure = {
+		...nextStructure,
+		revision: Number(structure.revision ?? 0) + 1
+	};
+	return {
+		...project,
+		structure: nextStructure,
+		layout: nextLayout,
+		clientRevision: Number(project.clientRevision ?? 0) + 1,
+		stats: nextProjectStats(project, nextStructure, nextLayout)
+	};
+}
+
 function applyLocalOperation(project, operation) {
+	if (isDecorationOperation(operation)) return applyLocalDecorationOperation(project, operation);
 	const next = cloneProject(project);
 	const structure = next.structure;
 	const layout = next.layout;
@@ -1735,13 +1921,7 @@ function applyLocalOperation(project, operation) {
 	reclassifyLocal(structure);
 	structure.revision = Number(structure.revision ?? 0) + 1;
 	next.clientRevision = Number(project.clientRevision ?? 0) + 1;
-	next.stats = {
-		...(next.stats ?? {}),
-		rooms: structure.rooms.filter((room) => !room.suppressed).length,
-		doors: layout.doors?.length ?? 0,
-		stairs: layout.stairs?.length ?? 0,
-		exits: layout.exits?.length ?? 0
-	};
+	next.stats = nextProjectStats(next, structure, layout);
 	return next;
 }
 
@@ -1772,6 +1952,54 @@ function appendStructurePath(cells, className, fill, stroke) {
 	elements.structureOverlay.append(path);
 }
 
+function decorationObjectIds(project = currentProject) {
+	const ids = new Set((project?.structure?.objects ?? []).map((object) => String(object.id)));
+	for (const collection of ['doors', 'stairs', 'exits']) {
+		for (const item of project?.layout?.[collection] ?? []) ids.add(String(item.id));
+	}
+	return ids;
+}
+
+function setRenderedDecorationObjects(project = currentProject) {
+	renderedDecorationObjectIds.clear();
+	for (const id of decorationObjectIds(project)) renderedDecorationObjectIds.add(id);
+	pendingDecorationObjectIds.clear();
+}
+
+function refreshPendingDecorationObjects(project = currentProject) {
+	pendingDecorationObjectIds.clear();
+	for (const id of decorationObjectIds(project)) {
+		if (!renderedDecorationObjectIds.has(id)) pendingDecorationObjectIds.add(id);
+	}
+}
+
+function appendPendingDecorations() {
+	if (!pendingDecorationObjectIds.size) return;
+	const objects = new Map((currentProject?.structure?.objects ?? []).map((object) => [String(object.id), object]));
+	const layoutObjects = new Map();
+	for (const collection of ['doors', 'stairs', 'exits']) {
+		for (const item of currentProject?.layout?.[collection] ?? []) {
+			layoutObjects.set(String(item.id), { collection, item });
+		}
+	}
+	for (const id of pendingDecorationObjectIds) {
+		const object = objects.get(id);
+		if (object) {
+			appendLightweightObject(elements.structureOverlay, object, 'structure-pending-decoration');
+			continue;
+		}
+		const layoutObject = layoutObjects.get(id);
+		if (layoutObject) {
+			appendLightweightLayoutObject(
+				elements.structureOverlay,
+				layoutObject.collection,
+				layoutObject.item,
+				'structure-pending-decoration'
+			);
+		}
+	}
+}
+
 function renderStructureOverlay() {
 	elements.structureOverlay.replaceChildren();
 	const structure = currentProject?.structure;
@@ -1784,6 +2012,7 @@ function renderStructureOverlay() {
 	appendStructurePath(additions, 'structure-pending-add', appearance.floor, appearance.walls);
 	appendStructurePath(removals, 'structure-pending-remove', appearance.background, appearance.walls);
 	appendStructurePath([...pendingClassificationCells].map(keyCell), 'structure-pending-class', '', '');
+	appendPendingDecorations();
 }
 
 function queueEditPreview(cells = [], tool = activeTool, validity = null) {
@@ -1970,6 +2199,7 @@ async function renderCanonicalProject(projectId, revision, clientRevision, seque
 		) return false;
 		currentProject = nextProject;
 		pendingClassificationCells.clear();
+		setRenderedDecorationObjects(nextProject);
 		localStatus = workingCopyDirty ? 'statusUnsaved' : '';
 		renderAll();
 		if (persistPreview) await autosaveCurrent(timing, true);
@@ -1983,7 +2213,7 @@ async function renderCanonicalProject(projectId, revision, clientRevision, seque
 	}
 }
 
-function scheduleCanonicalRender() {
+function scheduleCanonicalRender(delay = canonicalRenderDelayMs) {
 	if (fastMode && workspaceView === 'structure') return;
 	if (!currentProjectId || !currentProject?.structure || !structureNeedsRender()) return;
 	if (canonicalRenderTimer) clearTimeout(canonicalRenderTimer);
@@ -1995,12 +2225,12 @@ function scheduleCanonicalRender() {
 		canonicalRenderTimer = null;
 		if (sequence !== canonicalRenderSequence || currentProjectId !== projectId) return;
 		if (editing || generating) {
-			scheduleCanonicalRender();
+			scheduleCanonicalRender(delay);
 			return;
 		}
 		const needsPreview = !hostState.projects?.find((project) => project.id === projectId)?.previewUrl;
 		void renderCanonicalProject(projectId, revision, clientRevision, sequence, needsPreview);
-	}, canonicalRenderDelayMs);
+	}, Math.max(0, Number(delay) || 0));
 }
 
 async function ensureCanonicalProject({ persistPreview = true } = {}) {
@@ -2033,6 +2263,7 @@ async function restoreHistory(nextProject, destination) {
 	if (destination.length > maxHistoryEntries) destination.shift();
 	const nextClientRevision = Number(currentProject?.clientRevision ?? 0) + 1;
 	currentProject = { ...cloneProject(nextProject), clientRevision: nextClientRevision };
+	refreshPendingDecorationObjects();
 	writeParameters(currentProject.parameters);
 	writeAppearance(currentProject.appearance);
 	setProjectImage(currentProject.renderSvg, false);
@@ -2057,26 +2288,32 @@ async function redoEdit() {
 
 async function commitStructure(operation) {
 	if (!canEditMap()) return;
+	const decorationOperation = isDecorationOperation(operation);
+	if (operation.type === 'placeObject' && !operation.objectId) operation.objectId = currentPlacementObjectId();
 	const requestId = newEditRequestId();
 	const totalStartedAt = performance.now();
 	const timing = (stage, elapsedMs) => logEditTime(requestId, stage, elapsedMs);
-	const previous = cloneProject();
+	const previous = decorationOperation ? currentProject : cloneProject();
 	const startedAt = performance.now();
 	const next = applyLocalOperation(currentProject, operation);
 	if (!next) {
 		localStatus = 'errorEditFailed';
+		renderAll();
 		return;
 	}
 	currentProject = next;
+	if (decorationOperation) reusePlacementIndexAfterDecoration(previous, next);
 	if (operation.type === 'toggleRoom' && Array.isArray(operation.cell)) pendingClassificationCells.add(cellKey(operation.cell));
+	if (decorationOperation) refreshPendingDecorationObjects();
 	pushHistory(previous);
 	writeParameters(currentProject.parameters);
 	writeAppearance(currentProject.appearance);
 	timing('client_operation', performance.now() - startedAt);
 	localStatus = 'statusUnsaved';
-	markWorkingCopyDirty();
+	markWorkingCopyDirty(decorationOperation ? Math.min(canonicalRenderDelayMs, 750) : canonicalRenderDelayMs);
 	renderEditPreview();
-	renderAll();
+	if (decorationOperation) renderDecorationCommitState(operation);
+	else renderAll();
 	timing('browser_total', performance.now() - totalStartedAt);
 }
 
@@ -2111,6 +2348,7 @@ async function initializeProjectStructure() {
 			renderSvg: renderedSvg,
 			clientRevision: Number(currentProject.clientRevision ?? 0) + 1
 		};
+		setRenderedDecorationObjects(currentProject);
 		setProjectImage(currentProject.renderSvg, false);
 		workingCopyDirty = true;
 		void persistWorkingDraft();
@@ -2132,6 +2370,8 @@ async function generate() {
 	if (!currentProjectId || generating) return;
 	cancelCanonicalRender();
 	pendingClassificationCells.clear();
+	pendingDecorationObjectIds.clear();
+	renderedDecorationObjectIds.clear();
 	if (appearanceUpdateTimer) {
 		clearTimeout(appearanceUpdateTimer);
 		appearanceUpdateTimer = null;
@@ -2158,6 +2398,8 @@ async function generate() {
 			appearance: normalizeAppearance(currentProject?.appearance),
 			clientRevision: previousClientRevision + 1
 		};
+		if (structureNeedsRender(currentProject)) refreshPendingDecorationObjects();
+		else setRenderedDecorationObjects(currentProject);
 		writeParameters(currentProject.parameters);
 		writeAppearance(currentProject.appearance);
 		workingCopyDirty = true;
@@ -2181,6 +2423,9 @@ async function generate() {
 async function openProject(message) {
 	cancelCanonicalRender();
 	pendingClassificationCells.clear();
+	pendingDecorationObjectIds.clear();
+	renderedDecorationObjectIds.clear();
+	cancelScheduledDraftPersist();
 	if (appearanceUpdateTimer) clearTimeout(appearanceUpdateTimer);
 	appearanceUpdateTimer = null;
 	resetHistory();
@@ -2195,6 +2440,7 @@ async function openProject(message) {
 		const serverProject = message.projectData && typeof message.projectData === 'object'
 			? cloneProject(message.projectData)
 			: JSON.parse(base64ToUtf8(String(message.projectBase64 ?? '')));
+		setRenderedDecorationObjects(serverProject);
 		currentProject = serverProject;
 		const draft = await readWorkingDraft(currentProjectId);
 		if (currentProjectId !== openingProjectId) return;
@@ -2208,6 +2454,7 @@ async function openProject(message) {
 		} else if (draft) {
 			void deleteWorkingDraft(currentProjectId);
 		}
+		refreshPendingDecorationObjects();
 		currentProject.appearance = normalizeAppearance(currentProject.appearance);
 		writeParameters(currentProject.parameters);
 		writeAppearance(currentProject.appearance);
@@ -2215,6 +2462,8 @@ async function openProject(message) {
 		if (!workingCopyDirty) localStatus = '';
 	} catch {
 		currentProject = null;
+		pendingDecorationObjectIds.clear();
+		renderedDecorationObjectIds.clear();
 		setProjectImage(null);
 		localStatus = 'errorGeneric';
 	}
@@ -2399,7 +2648,7 @@ elements.canvas.addEventListener('pointerdown', (event) => {
 		editGesture = {
 			tool: activeTool, start: cell, current: cell, last: cell,
 			shift: event.shiftKey, cells: new Set([cellKey(cell)]), pointerId: event.pointerId,
-			objectId: propTools.has(activeTool) ? currentPlacementObjectId() : ''
+			objectId: (propTools.has(activeTool) || layoutTools.has(activeTool)) ? currentPlacementObjectId() : ''
 		};
 		elements.canvas.setPointerCapture(event.pointerId);
 		hoveredCell = cell;
@@ -2489,7 +2738,7 @@ elements.canvas.addEventListener('pointerup', (event) => {
 				void commitStructure(operation);
 			} else localStatus = 'invalidPlacement';
 		}
-		renderAll();
+		if (localStatus === 'invalidPlacement') elements.statusText.textContent = statusLabel();
 		return;
 	}
 	pointerStart = null;
@@ -2559,6 +2808,7 @@ document.addEventListener('pointerdown', (event) => {
 window.addEventListener('resize', () => currentProject?.structure && fitMap());
 window.addEventListener('pagehide', () => {
 	if (!workingCopyDirty) return;
+	cancelScheduledDraftPersist();
 	void persistWorkingDraft();
 	void checkpointWorkingCopy();
 });

@@ -183,11 +183,8 @@ class ShapeGroup(Shape):
         return cls(includes=[circle], excludes=[rect]) #type: ignore
     
     def contains(self, px: float, py: float) -> bool:
-        """Check if a point is contained within this shape group."""
-        return (
-            any(shape.contains(px, py) for shape in self.includes) and
-            not any(shape.contains(px, py) for shape in self.excludes)
-        )
+        """Check containment through the cached Skia union/difference path."""
+        return self.path.contains(px, py)
         
     @property
     def path(self) -> skia.Path:

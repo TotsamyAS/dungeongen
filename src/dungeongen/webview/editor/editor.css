@@ -47,8 +47,15 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .editor-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: radial-gradient(circle at 20% 10%, rgba(216, 139, 53, 0.09), transparent 32%), #080302; }
 .editor-canvas { position: absolute; inset: 0; overflow: hidden; cursor: grab; touch-action: none; outline: none; }
 .editor-canvas.panning { cursor: grabbing; }
+.editor-canvas.editing { cursor: crosshair; }
 .map-surface { position: absolute; left: 50%; top: 50%; transform-origin: 0 0; will-change: transform; user-select: none; }
 .map-image { display: block; max-width: none; border: 1px solid rgba(216, 139, 53, 0.18); background: #fff; box-shadow: 0 20px 64px var(--shadow); user-select: none; -webkit-user-drag: none; }
+.map-edit-overlay { position: absolute; z-index: 2; inset: 0; display: block; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.edit-preview-cell { vector-effect: non-scaling-stroke; stroke-width: 2px; }
+.edit-preview-cell.wall { fill: rgba(200, 70, 62, .42); stroke: #ff9a8f; }
+.edit-preview-cell.corridor { fill: rgba(84, 174, 107, .4); stroke: #b3ed9a; }
+.edit-preview-cell.roundRoom { fill: rgba(64, 145, 196, .4); stroke: #a9ddff; }
+.edit-preview-cell.roomClass { fill: rgba(216, 139, 53, .42); stroke: #ffe9a9; stroke-dasharray: 6 4; }
 .workspace-empty, .canvas-loading { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; align-content: center; gap: 10px; padding: 24px; color: var(--text); text-align: center; background: radial-gradient(circle at center, rgba(18, 7, 5, 0.82), rgba(4, 1, 1, 0.96)); }
 .workspace-empty span { max-width: 460px; color: var(--muted); }
 .workspace-empty .ui-button { margin-top: 6px; }
@@ -60,6 +67,8 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .tool-icon, .session-action, .canvas-control { position: relative; display: grid; place-items: center; flex: none; width: 30px; height: 30px; min-width: 30px; min-height: 30px; padding: 0; border: 1px solid transparent; border-radius: 10px; color: var(--muted); background: transparent; cursor: pointer; transition: transform .14s, background .14s, border-color .14s, box-shadow .14s; }
 .tool-icon:hover, .tool-icon.active, .session-action:hover, .canvas-control:hover { border-color: var(--gold); color: var(--vellum); background-color: rgba(114, 34, 42, 0.68); }
 .tool-icon:active, .session-action:active, .canvas-control:active { transform: translateY(2px) scale(.98); }
+.tool-icon:disabled, .session-action:disabled { opacity: .38; cursor: not-allowed; }
+.tool-icon:disabled:hover, .session-action:disabled:hover { border-color: transparent; color: var(--muted); background: transparent; transform: none; }
 [data-tooltip] { position: relative; }
 [data-tooltip]::after { position: absolute; right: calc(100% + 9px); top: 50%; z-index: 30; max-width: 220px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--panel-strong); box-shadow: 0 8px 24px var(--shadow); content: attr(data-tooltip); font-size: 12px; line-height: 1.2; white-space: nowrap; opacity: 0; pointer-events: none; transform: translateY(-50%) translateX(4px); transition: opacity .12s, transform .12s; }
 [data-tooltip]:hover::after, [data-tooltip]:focus-visible::after { opacity: 1; transform: translateY(-50%) translateX(0); }
@@ -74,6 +83,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .session-title strong, .session-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-title strong { color: var(--vellum); font-size: 14px; }
 .session-title span { color: var(--muted); font-size: 11px; }
+.history-actions { display: flex; align-items: center; gap: 2px; }
 .theme-toggle, .theme-toggle.compact { position: relative; width: 30px; min-width: 30px; height: 30px; min-height: 30px; padding: 0; display: inline-flex; align-items: center; justify-content: center; flex: none; border: 1px solid var(--line); border-radius: 10px; color: var(--text); background: rgba(0, 0, 0, 0.2); box-shadow: none; cursor: pointer; transition: transform .14s, border-color .14s, background .14s, box-shadow .14s; }
 .theme-toggle:hover, .theme-toggle.compact:hover { transform: translateY(0); border-color: var(--gold); background-color: rgba(216, 139, 53, 0.2); box-shadow: none; }
 .theme-toggle-orb, .theme-toggle.compact .theme-toggle-orb { width: auto; height: auto; display: grid; place-items: center; flex: none; border: 0; border-radius: 0; color: currentColor; background: transparent; box-shadow: none; }
@@ -85,6 +95,17 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .tool-view.active { display: grid; }
 .tool-view h2 { margin: 0; color: var(--vellum); font-size: 18px; }
 .muted { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.edit-tool-help { align-content: start; }
+.edit-tool-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.edit-tool-tile { min-width: 0; min-height: 78px; display: grid; place-items: center; align-content: center; gap: 7px; padding: 9px 6px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); text-align: center; background: var(--card); cursor: pointer; }
+.edit-tool-tile svg { width: 24px; height: 24px; color: var(--muted); }
+.edit-tool-tile strong { font-size: 12px; line-height: 1.2; }
+.edit-tool-tile:hover, .edit-tool-tile.active { border-color: var(--gold); color: var(--vellum); background: rgba(114, 34, 42, .5); box-shadow: inset 0 0 0 1px rgba(216, 139, 53, .2); }
+.edit-tool-tile.active svg { color: var(--vellum); }
+.edit-tool-tile:disabled { opacity: .45; cursor: not-allowed; }
+.edit-tool-details { display: grid; gap: 8px; padding-top: 2px; }
+.edit-tool-details > strong { color: var(--vellum); font-size: 14px; }
+.edit-shortcut { margin: 2px 0 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--vellum); background: var(--card); font-size: 12px; line-height: 1.4; }
 
 .field { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
 .field input, .field select, .create-row input { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; color: var(--text); caret-color: var(--vellum); background-color: var(--field); }
@@ -157,6 +178,8 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 :root[data-theme='light'] .canvas-controls { background: rgba(255, 254, 250, .92); }
 :root[data-theme='light'] .tool-icon, :root[data-theme='light'] .session-action, :root[data-theme='light'] .canvas-control, :root[data-theme='light'] .ui-button, :root[data-theme='light'] .project-card, :root[data-theme='light'] .storage-meter { color: var(--text); border-color: var(--line); background: rgba(255, 252, 232, .66); }
 :root[data-theme='light'] .tool-icon:hover, :root[data-theme='light'] .tool-icon.active, :root[data-theme='light'] .session-action:hover, :root[data-theme='light'] .canvas-control:hover, :root[data-theme='light'] .ui-button:hover, :root[data-theme='light'] .project-card:hover, :root[data-theme='light'] .project-card.active { color: var(--wine-dark); border-color: var(--gold); background: rgba(255, 238, 191, .92); }
+:root[data-theme='light'] .edit-tool-tile { color: var(--text); border-color: var(--line); background: rgba(255, 252, 232, .66); }
+:root[data-theme='light'] .edit-tool-tile:hover, :root[data-theme='light'] .edit-tool-tile.active { color: var(--wine-dark); border-color: var(--gold); background: rgba(255, 238, 191, .92); }
 :root[data-theme='light'] .ui-button.primary, :root[data-theme='light'] .ui-button.primary:hover { color: #fff7d7; border-color: var(--wine); background: linear-gradient(180deg, #a6533e, #7b2d24 58%, #5a1b17); }
 :root[data-theme='light'] .theme-toggle, :root[data-theme='light'] .theme-toggle.compact { color: var(--text); background: rgba(255, 252, 232, .56); box-shadow: none; }
 :root[data-theme='light'] .theme-toggle:hover, :root[data-theme='light'] .theme-toggle.compact:hover { color: var(--wine-dark); border-color: var(--gold); background: rgba(255, 238, 191, .9); }

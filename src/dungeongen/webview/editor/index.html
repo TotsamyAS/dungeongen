@@ -4,7 +4,7 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title></title>
-		<link rel="stylesheet" href="/dungeon-editor/editor.css?v=20260731-3" />
+		<link rel="stylesheet" href="/dungeon-editor/editor.css?v=20260801-3" />
 	</head>
 	<body>
 		<svg class="icon-symbols" aria-hidden="true">
@@ -23,19 +23,25 @@
 			<symbol id="icon-zoom-in" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35M11 8v6M8 11h6"/></symbol>
 			<symbol id="icon-zoom-out" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35M8 11h6"/></symbol>
 			<symbol id="icon-fit" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></symbol>
+			<symbol id="icon-wall" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 9v6M16 15v6M16 3v6M3 15h18M3 9h18M8 15v6M8 3v6"/></symbol>
+			<symbol id="icon-route" viewBox="0 0 24 24"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></symbol>
+			<symbol id="icon-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></symbol>
+			<symbol id="icon-room-class" viewBox="0 0 24 24"><path d="M3 3h18v18H3zM9 3v18M15 3v18M3 9h18M3 15h18"/><path d="m8 12 2.5 2.5L16 9"/></symbol>
+			<symbol id="icon-undo" viewBox="0 0 24 24"><path d="M9 7 4 12l5 5"/><path d="M4 12h9a7 7 0 0 1 7 7"/></symbol>
+			<symbol id="icon-redo" viewBox="0 0 24 24"><path d="m15 7 5 5-5 5"/><path d="M20 12h-9a7 7 0 0 0-7 7"/></symbol>
 		</svg>
 
 		<div class="editor-shell">
 			<main class="editor-stage">
 				<div id="canvas" class="editor-canvas" tabindex="0">
-					<div id="mapSurface" class="map-surface"><img id="mapImage" class="map-image" alt="" /></div>
+					<div id="mapSurface" class="map-surface"><img id="mapImage" class="map-image" alt="" /><svg id="editOverlay" class="map-edit-overlay" aria-hidden="true"></svg></div>
 				</div>
 				<div id="emptyWorkspace" class="workspace-empty">
 					<strong data-label="emptyTitle"></strong><span data-label="emptyText"></span>
 					<button id="openGeneration" class="ui-button primary" type="button"><svg><use href="#icon-sparkles"/></svg><span data-label="openGeneration"></span></button>
 				</div>
 				<div id="loading" class="canvas-loading" hidden>
-					<div class="loading-card"><svg class="spinner" aria-hidden="true"><use href="#icon-loader-circle"/></svg><strong data-label="generating"></strong></div>
+					<div class="loading-card"><svg class="spinner" aria-hidden="true"><use href="#icon-loader-circle"/></svg><strong id="loadingLabel" data-label="generating"></strong></div>
 				</div>
 				<div class="canvas-controls" role="group" data-label-aria="viewControls">
 					<button id="zoomOut" class="canvas-control" type="button"><svg><use href="#icon-zoom-out"/></svg></button>
@@ -48,6 +54,7 @@
 			<nav class="tool-rail" data-label-aria="toolsAria">
 				<button class="tool-icon active" data-tool-button="projects" type="button"><svg><use href="#icon-folder"/></svg></button>
 				<button class="tool-icon" data-tool-button="generation" type="button"><svg><use href="#icon-sparkles"/></svg></button>
+				<button class="tool-icon" data-tool-button="editing" type="button"><svg><use href="#icon-pencil"/></svg></button>
 				<button class="tool-icon" data-tool-button="colors" type="button"><svg><use href="#icon-palette"/></svg></button>
 				<button class="tool-icon" data-tool-button="export" type="button"><svg><use href="#icon-download"/></svg></button>
 				<button class="tool-icon" data-tool-button="about" type="button"><svg><use href="#icon-info"/></svg></button>
@@ -58,6 +65,7 @@
 				<header class="session-bar">
 					<button id="backButton" class="session-action" type="button"><svg><use href="#icon-arrow-left"/></svg></button>
 					<div class="session-title"><strong id="projectTitle"></strong><span id="statusText"></span></div>
+					<div class="history-actions" role="group" data-label-aria="historyControls"><button id="undoEdit" class="session-action" type="button" data-tooltip="" aria-label="" aria-keyshortcuts="Control+Z Meta+Z" disabled><svg><use href="#icon-undo"/></svg></button><button id="redoEdit" class="session-action" type="button" data-tooltip="" aria-label="" aria-keyshortcuts="Control+Y Control+Shift+Z Meta+Shift+Z" disabled><svg><use href="#icon-redo"/></svg></button></div>
 					<button id="themeToggle" class="theme-toggle compact" type="button" data-tooltip="" aria-label="" aria-pressed="false"><span class="theme-toggle-orb" aria-hidden="true"><svg class="theme-icon theme-icon-sun"><use href="#icon-sun"/></svg><svg class="theme-icon theme-icon-moon"><use href="#icon-moon"/></svg></span></button>
 				</header>
 
@@ -88,6 +96,17 @@
 						<label class="check"><input id="halls" type="checkbox" checked/><span data-label="halls"></span></label>
 						<label class="check"><input id="showNumbers" type="checkbox" checked/><span data-label="showNumbers"></span></label>
 						<button id="generateButton" class="ui-button primary full-width" type="button" data-label="generate"></button>
+					</section>
+
+					<section class="tool-view edit-tool-help" data-tool-panel="editing">
+						<h2 data-label="editingTitle"></h2>
+						<div class="edit-tool-grid" role="group" data-label-aria="editingToolsAria">
+							<button class="edit-tool-tile active" data-edit-tool="wall" type="button" aria-pressed="true"><svg><use href="#icon-wall"/></svg><strong data-label="toolWall"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="corridor" type="button" aria-pressed="false"><svg><use href="#icon-route"/></svg><strong data-label="toolCorridor"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="roundRoom" type="button" aria-pressed="false"><svg><use href="#icon-circle"/></svg><strong data-label="toolRoundRoom"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="roomClass" type="button" aria-pressed="false"><svg><use href="#icon-room-class"/></svg><strong data-label="toolRoomClass"></strong></button>
+						</div>
+						<div class="edit-tool-details"><strong id="editToolTitle"></strong><p id="editToolHint" class="muted"></p><p id="editAreaShortcut" class="edit-shortcut"></p></div>
 					</section>
 
 					<section class="tool-view" data-tool-panel="colors">
@@ -122,6 +141,6 @@
 				</div>
 			</aside>
 		</div>
-		<script src="/dungeon-editor/editor.js?v=20260731-3" defer></script>
+		<script src="/dungeon-editor/editor.js?v=20260801-3" defer></script>
 	</body>
 </html>

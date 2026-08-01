@@ -1,6 +1,11 @@
 const fallbackLocale = 'ru';
-const editorAssetVersion = '20260731-3';
+const editorAssetVersion = '20260801-3';
 const defaultColorApplyDelayMs = 350;
+const defaultEditPreviewDelayMs = 1000;
+const cellSize = 64;
+const canvasPadding = cellSize * 2;
+const maxHistoryEntries = 20;
+const editingTools = new Set(['wall', 'corridor', 'roundRoom', 'roomClass']);
 const defaultAppearance = {
 	background: '#ffffff', shading: '#d0d2d5', floor: '#ffffff', shadow: '#d0d0d0',
 	walls: '#000000', hatching: '#000000', grid: '#202020', water: '#505050', numbers: '#000000'
@@ -29,16 +34,28 @@ let scale = 1;
 let panX = 0;
 let panY = 0;
 let pointerStart = null;
+let editGesture = null;
+let activePanel = 'projects';
+let activeTool = 'wall';
+let editing = false;
+let undoStack = [];
+let redoStack = [];
+let pendingAppearanceSnapshot = null;
 let appearanceUpdateTimer = null;
+let previewUpdateTimer = null;
 let colorApplyDelayMs = defaultColorApplyDelayMs;
+let editPreviewDelayMs = defaultEditPreviewDelayMs;
+let editTimeLogging = false;
 let fitImageOnLoad = true;
 
 const elements = {
 	canvas: document.getElementById('canvas'),
 	mapSurface: document.getElementById('mapSurface'),
 	mapImage: document.getElementById('mapImage'),
+	editOverlay: document.getElementById('editOverlay'),
 	emptyWorkspace: document.getElementById('emptyWorkspace'),
 	loading: document.getElementById('loading'),
+	loadingLabel: document.getElementById('loadingLabel'),
 	projectTitle: document.getElementById('projectTitle'),
 	statusText: document.getElementById('statusText'),
 	projectList: document.getElementById('projectList'),
@@ -53,6 +70,11 @@ const elements = {
 	exportButton: document.getElementById('exportButton'),
 	backButton: document.getElementById('backButton'),
 	themeToggle: document.getElementById('themeToggle'),
+	undoEdit: document.getElementById('undoEdit'),
+	redoEdit: document.getElementById('redoEdit'),
+	editToolTitle: document.getElementById('editToolTitle'),
+	editToolHint: document.getElementById('editToolHint'),
+	editAreaShortcut: document.getElementById('editAreaShortcut'),
 	stats: document.getElementById('stats'),
 	sourceLink: document.getElementById('sourceLink'),
 	zoomOut: document.getElementById('zoomOut'),
@@ -127,8 +149,13 @@ async function loadEditorConfig() {
 		const config = await response.json();
 		const delay = Number(config?.colorApplyDelayMs);
 		if (Number.isFinite(delay)) colorApplyDelayMs = Math.max(0, Math.min(5000, Math.round(delay)));
+		const previewDelay = Number(config?.editPreviewDelayMs);
+		if (Number.isFinite(previewDelay)) editPreviewDelayMs = Math.max(0, Math.min(10000, Math.round(previewDelay)));
+		editTimeLogging = config?.editTimeLogging === true;
 	} catch {
 		colorApplyDelayMs = defaultColorApplyDelayMs;
+		editPreviewDelayMs = defaultEditPreviewDelayMs;
+		editTimeLogging = false;
 	}
 }
 
@@ -159,7 +186,7 @@ function applyLabels() {
 		element.setAttribute('aria-label', t(element.dataset.labelAria));
 	});
 	const toolLabels = {
-		projects: 'toolProjects', generation: 'toolGeneration', colors: 'toolColors',
+		projects: 'toolProjects', generation: 'toolGeneration', editing: 'toolEditing', colors: 'toolColors',
 		export: 'toolExport', about: 'toolAbout'
 	};
 	document.querySelectorAll('[data-tool-button]').forEach((button) => {
@@ -172,7 +199,29 @@ function applyLabels() {
 	setControlLabel(elements.zoomIn, t('zoomIn'));
 	setControlLabel(elements.zoomOut, t('zoomOut'));
 	setControlLabel(elements.fitMap, t('fit'));
+	setControlLabel(elements.undoEdit, t('undo'));
+	setControlLabel(elements.redoEdit, t('redo'));
 	elements.createProjectForm.querySelector('button').setAttribute('aria-label', t('createProject'));
+	renderEditingTool();
+}
+
+function renderEditingTool() {
+	const content = {
+		wall: ['wallTitle', 'wallHint'],
+		corridor: ['corridorTitle', 'corridorHint'],
+		roundRoom: ['roundRoomTitle', 'roundRoomHint'],
+		roomClass: ['roomClassTitle', 'roomClassHint']
+	}[activeTool];
+	if (!content) return;
+	elements.editToolTitle.textContent = t(content[0]);
+	elements.editToolHint.textContent = t(content[1]);
+	elements.editAreaShortcut.textContent = t('areaShortcut');
+	elements.editAreaShortcut.hidden = !['wall', 'corridor'].includes(activeTool);
+	document.querySelectorAll('[data-edit-tool]').forEach((button) => {
+		const selected = button.dataset.editTool === activeTool;
+		button.classList.toggle('active', selected);
+		button.setAttribute('aria-pressed', String(selected));
+	});
 }
 
 function renderSideFire() {
@@ -197,6 +246,16 @@ function setControlLabel(element, value) {
 
 function send(type, payload = {}) {
 	window.parent.postMessage({ type, ...payload }, '*');
+}
+
+function newEditRequestId() {
+	return globalThis.crypto?.randomUUID?.().replaceAll('-', '').slice(0, 12)
+		?? `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function logEditTime(requestId, stage, elapsedMs) {
+	if (!editTimeLogging) return;
+	console.info(`[EDIT-TIME] id=${requestId} stage=${stage} elapsed_ms=${elapsedMs.toFixed(2)}`);
 }
 
 function bytesToBase64(bytes) {
@@ -274,6 +333,31 @@ function readAppearance() {
 	return Object.fromEntries(Object.entries(elements.colors).map(([key, input]) => [key, input.value]));
 }
 
+function cloneProject(project = currentProject) {
+	return project ? JSON.parse(JSON.stringify(project)) : null;
+}
+
+function projectForEdit(project = currentProject) {
+	return project ? { ...project, renderSvg: null } : null;
+}
+
+function resetHistory() {
+	undoStack = [];
+	redoStack = [];
+	pendingAppearanceSnapshot = null;
+}
+
+function pushHistory(snapshot) {
+	if (!snapshot) return;
+	undoStack.push(snapshot);
+	if (undoStack.length > maxHistoryEntries) undoStack.shift();
+	redoStack = [];
+}
+
+function canEditMap() {
+	return Boolean(currentProjectId && currentProject?.renderSvg && currentProject?.structure && !generating && !editing);
+}
+
 function renderAll() {
 	elements.projectTitle.textContent = currentProjectName || t('productTitle');
 	elements.statusText.textContent = statusLabel();
@@ -283,6 +367,12 @@ function renderAll() {
 	elements.exportButton.disabled = !currentProject?.renderSvg || generating || Boolean(hostState.exporting);
 	elements.openGeneration.disabled = !currentProjectId;
 	for (const input of Object.values(elements.colors)) input.disabled = !currentProject?.renderSvg;
+	document.querySelector('[data-tool-button="editing"]').disabled = !canEditMap();
+	document.querySelectorAll('[data-edit-tool]').forEach((button) => { button.disabled = !canEditMap(); });
+	elements.undoEdit.disabled = !undoStack.length || generating || editing;
+	elements.redoEdit.disabled = !redoStack.length || generating || editing;
+	elements.canvas.classList.toggle('editing', activePanel === 'editing' && canEditMap());
+	renderEditingTool();
 	renderThemeToggle();
 	renderProjects();
 	renderStorage();
@@ -413,6 +503,7 @@ function setProjectImage(svg, fitOnLoad = true) {
 	currentImageUrl = '';
 	if (!svg) {
 		elements.mapImage.removeAttribute('src');
+		renderEditPreview();
 		elements.emptyWorkspace.hidden = false;
 		return;
 	}
@@ -450,6 +541,99 @@ function zoom(multiplier) {
 	updateTransform();
 }
 
+function syncEditOverlaySize() {
+	const width = elements.mapImage.naturalWidth || 1;
+	const height = elements.mapImage.naturalHeight || 1;
+	elements.editOverlay.setAttribute('viewBox', `0 0 ${width} ${height}`);
+}
+
+function eventCell(event) {
+	const bounds = currentProject?.structure?.bounds;
+	const mapBounds = currentProject?.structure?.mapBounds;
+	if (!bounds || !mapBounds || !elements.mapImage.naturalWidth) return null;
+	const rect = elements.mapImage.getBoundingClientRect();
+	if (rect.width <= 0 || rect.height <= 0) return null;
+	const pixelX = (event.clientX - rect.left) * elements.mapImage.naturalWidth / rect.width;
+	const pixelY = (event.clientY - rect.top) * elements.mapImage.naturalHeight / rect.height;
+	const cell = [
+		Math.floor((pixelX - canvasPadding) / cellSize + mapBounds[0]),
+		Math.floor((pixelY - canvasPadding) / cellSize + mapBounds[1])
+	];
+	return cell[0] >= bounds[0] && cell[0] < bounds[2] && cell[1] >= bounds[1] && cell[1] < bounds[3]
+		? cell : null;
+}
+
+function cellKey(cell) {
+	return `${cell[0]},${cell[1]}`;
+}
+
+function keyCell(key) {
+	return key.split(',').map(Number);
+}
+
+function lineCells(start, end) {
+	let [x0, y0] = start;
+	const [x1, y1] = end;
+	const result = [];
+	const dx = Math.abs(x1 - x0);
+	const sx = x0 < x1 ? 1 : -1;
+	const dy = -Math.abs(y1 - y0);
+	const sy = y0 < y1 ? 1 : -1;
+	let error = dx + dy;
+	while (true) {
+		result.push([x0, y0]);
+		if (x0 === x1 && y0 === y1) break;
+		const doubled = error * 2;
+		if (doubled >= dy) { error += dy; x0 += sx; }
+		if (doubled <= dx) { error += dx; y0 += sy; }
+	}
+	return result;
+}
+
+function rectangleCells(start, end) {
+	const result = [];
+	for (let y = Math.min(start[1], end[1]); y <= Math.max(start[1], end[1]); y += 1) {
+		for (let x = Math.min(start[0], end[0]); x <= Math.max(start[0], end[0]); x += 1) result.push([x, y]);
+	}
+	return result;
+}
+
+function roundPreview(center, radius) {
+	const bounds = currentProject.structure.bounds;
+	const result = [];
+	for (let y = center[1] - radius; y <= center[1] + radius; y += 1) {
+		for (let x = center[0] - radius; x <= center[0] + radius; x += 1) {
+			if (x < bounds[0] || x >= bounds[2] || y < bounds[1] || y >= bounds[3]) continue;
+			if ((x - center[0]) ** 2 + (y - center[1]) ** 2 <= (radius + .5) ** 2) result.push([x, y]);
+		}
+	}
+	return result;
+}
+
+function gestureCells(gesture, current, shiftKey = false) {
+	if (gesture.tool === 'roundRoom') {
+		const radius = Math.max(1, Math.abs(current[0] - gesture.start[0]), Math.abs(current[1] - gesture.start[1]));
+		return roundPreview(gesture.start, radius);
+	}
+	if (gesture.tool === 'roomClass') return [current];
+	if (gesture.shift || shiftKey) return rectangleCells(gesture.start, current);
+	return [...gesture.cells].map(keyCell);
+}
+
+function renderEditPreview(cells = [], tool = activeTool) {
+	elements.editOverlay.replaceChildren();
+	const mapBounds = currentProject?.structure?.mapBounds;
+	if (!mapBounds || !cells.length) return;
+	const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+	path.setAttribute('d', cells.map((cell) => {
+		const x = canvasPadding + (cell[0] - mapBounds[0]) * cellSize;
+		const y = canvasPadding + (cell[1] - mapBounds[1]) * cellSize;
+		return `M${x} ${y}h${cellSize}v${cellSize}h-${cellSize}z`;
+	}).join(''));
+	path.setAttribute('class', `edit-preview-cell ${tool}`);
+	elements.editOverlay.append(path);
+}
+
 async function makePreviewBase64() {
 	if (!currentProject?.renderSvg) return '';
 	const canvas = document.createElement('canvas');
@@ -467,6 +651,158 @@ async function makePreviewBase64() {
 	return bytesToBase64(new Uint8Array(await blob.arrayBuffer()));
 }
 
+async function autosaveCurrent(timing = null, includePreview = true) {
+	if (!currentProjectId || !currentProject?.renderSvg) return;
+	let startedAt = performance.now();
+	const encodedProject = projectBase64();
+	timing?.('autosave_project_encode', performance.now() - startedAt);
+	let previewBase64 = '';
+	if (includePreview) {
+		startedAt = performance.now();
+		await elements.mapImage.decode().catch(() => undefined);
+		timing?.('image_decode', performance.now() - startedAt);
+		startedAt = performance.now();
+		previewBase64 = await makePreviewBase64();
+		timing?.('autosave_preview', performance.now() - startedAt);
+	}
+	startedAt = performance.now();
+	send('dungeongen:autosave', {
+		projectId: currentProjectId,
+		projectBase64: encodedProject,
+		previewBase64
+	});
+	timing?.('autosave_dispatch', performance.now() - startedAt);
+}
+
+function scheduleAutosavePreview(timing = null) {
+	if (previewUpdateTimer) clearTimeout(previewUpdateTimer);
+	const projectId = currentProjectId;
+	previewUpdateTimer = setTimeout(() => {
+		previewUpdateTimer = null;
+		if (!projectId || currentProjectId !== projectId) return;
+		if (editing || generating) {
+			scheduleAutosavePreview(timing);
+			return;
+		}
+		const backgroundTiming = timing
+			? (stage, elapsedMs) => timing(`background_${stage}`, elapsedMs)
+			: null;
+		void autosaveCurrent(backgroundTiming, true);
+	}, editPreviewDelayMs);
+}
+
+async function restoreHistory(nextProject, destination) {
+	if (!nextProject || editing || generating) return;
+	if (appearanceUpdateTimer) clearTimeout(appearanceUpdateTimer);
+	appearanceUpdateTimer = null;
+	pendingAppearanceSnapshot = null;
+	destination.push(cloneProject());
+	if (destination.length > maxHistoryEntries) destination.shift();
+	currentProject = cloneProject(nextProject);
+	writeParameters(currentProject.parameters);
+	writeAppearance(currentProject.appearance);
+	setProjectImage(currentProject.renderSvg, false);
+	localStatus = 'statusSaving';
+	renderAll();
+	await autosaveCurrent();
+}
+
+async function undoEdit() {
+	if (!undoStack.length || editing || generating) return;
+	const snapshot = undoStack.pop();
+	await restoreHistory(snapshot, redoStack);
+	renderAll();
+}
+
+async function redoEdit() {
+	if (!redoStack.length || editing || generating) return;
+	const snapshot = redoStack.pop();
+	await restoreHistory(snapshot, undoStack);
+	renderAll();
+}
+
+async function commitStructure(operation) {
+	if (!canEditMap()) return;
+	const requestId = newEditRequestId();
+	const totalStartedAt = performance.now();
+	const timing = (stage, elapsedMs) => logEditTime(requestId, stage, elapsedMs);
+	let editSucceeded = false;
+	const previous = cloneProject();
+	editing = true;
+	localStatus = 'statusEditing';
+	renderAll();
+	try {
+		let startedAt = performance.now();
+		const requestBody = JSON.stringify({ project: projectForEdit(), operation });
+		timing('request_serialization', performance.now() - startedAt);
+		startedAt = performance.now();
+		const response = await fetch('/dungeon-editor/api/edit', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'X-Dungeongen-Capability': capability,
+				'X-Dungeongen-Request-Id': requestId
+			},
+			body: requestBody
+		});
+		timing('fetch_until_headers', performance.now() - startedAt);
+		startedAt = performance.now();
+		const payload = await response.json().catch(() => null);
+		timing('response_decode', performance.now() - startedAt);
+		if (!response.ok || !payload?.success) throw new Error(payload?.error ?? 'editFailed');
+		startedAt = performance.now();
+		currentProject = payload.project;
+		pushHistory(previous);
+		writeParameters(currentProject.parameters);
+		writeAppearance(currentProject.appearance);
+		setProjectImage(currentProject.renderSvg, false);
+		timing('project_apply', performance.now() - startedAt);
+		localStatus = 'statusSaving';
+		await autosaveCurrent(timing, false);
+		editSucceeded = true;
+	} catch {
+		localStatus = 'errorEditFailed';
+	} finally {
+		timing('browser_total', performance.now() - totalStartedAt);
+		editing = false;
+		if (editSucceeded) scheduleAutosavePreview(timing);
+		renderEditPreview();
+		renderAll();
+	}
+}
+
+async function initializeProjectStructure() {
+	if (!capability || !currentProjectId || !currentProject?.renderSvg || !currentProject?.layout || currentProject?.structure || editing) return;
+	const projectId = currentProjectId;
+	const project = cloneProject();
+	editing = true;
+	localStatus = 'statusEditing';
+	elements.loadingLabel.textContent = t('preparingEditor');
+	elements.loading.hidden = false;
+	renderAll();
+	try {
+		const response = await fetch('/dungeon-editor/api/edit', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', 'X-Dungeongen-Capability': capability },
+			body: JSON.stringify({ project: projectForEdit(project), operation: { type: 'initialize' } })
+		});
+		const payload = await response.json().catch(() => null);
+		if (!response.ok || !payload?.success) throw new Error(payload?.error ?? 'editFailed');
+		if (currentProjectId !== projectId) return;
+		currentProject = payload.project;
+		setProjectImage(currentProject.renderSvg, false);
+		localStatus = 'statusSaving';
+		await autosaveCurrent();
+	} catch {
+		if (currentProjectId === projectId) localStatus = 'errorEditFailed';
+	} finally {
+		editing = false;
+		elements.loadingLabel.textContent = t('generating');
+		elements.loading.hidden = true;
+		renderAll();
+	}
+}
+
 async function generate() {
 	if (!currentProjectId || generating) return;
 	if (appearanceUpdateTimer) {
@@ -474,6 +810,7 @@ async function generate() {
 		appearanceUpdateTimer = null;
 		if (currentProject?.renderSvg) currentProject.appearance = normalizeAppearance(readAppearance());
 	}
+	pendingAppearanceSnapshot = null;
 	generating = true;
 	localStatus = 'statusGenerating';
 	elements.loading.hidden = false;
@@ -495,15 +832,12 @@ async function generate() {
 		writeParameters(currentProject.parameters);
 		writeAppearance(currentProject.appearance);
 		setProjectImage(currentProject.renderSvg);
+		resetHistory();
 		await elements.mapImage.decode().catch(() => undefined);
 		fitMap();
 		localStatus = 'statusSaving';
 		renderAll();
-		send('dungeongen:autosave', {
-			projectId: currentProjectId,
-			projectBase64: projectBase64(),
-			previewBase64: await makePreviewBase64()
-		});
+		await autosaveCurrent();
 	} catch {
 		localStatus = 'errorGenerationFailed';
 	} finally {
@@ -516,6 +850,8 @@ async function generate() {
 function openProject(message) {
 	if (appearanceUpdateTimer) clearTimeout(appearanceUpdateTimer);
 	appearanceUpdateTimer = null;
+	resetHistory();
+	renderEditPreview();
 	localStatus = 'statusLoading';
 	currentProjectId = String(message.projectId ?? '');
 	currentProjectName = String(message.name ?? '');
@@ -532,6 +868,7 @@ function openProject(message) {
 		localStatus = 'errorGeneric';
 	}
 	renderAll();
+	void initializeProjectStructure();
 }
 
 function applyHostState(next) {
@@ -545,9 +882,14 @@ function applyHostState(next) {
 		applyTheme(hostState.theme, { persist: false });
 	}
 	renderAll();
+	void initializeProjectStructure();
 }
 
 function activateTool(name) {
+	if (name === 'editing' && !canEditMap()) return;
+	activePanel = name;
+	editGesture = null;
+	renderEditPreview();
 	document.querySelectorAll('[data-tool-button]').forEach((button) => {
 		button.classList.toggle('active', button.dataset.toolButton === name);
 	});
@@ -559,31 +901,43 @@ function activateTool(name) {
 document.querySelectorAll('[data-tool-button]').forEach((button) => {
 	button.addEventListener('click', () => activateTool(button.dataset.toolButton));
 });
+document.querySelectorAll('[data-edit-tool]').forEach((button) => {
+	button.addEventListener('click', () => {
+		if (!canEditMap() || !editingTools.has(button.dataset.editTool)) return;
+		activeTool = button.dataset.editTool;
+		editGesture = null;
+		renderEditPreview();
+		renderEditingTool();
+	});
+});
 
 async function saveAppearance() {
 	if (!currentProjectId || !currentProject?.renderSvg) return;
 	localStatus = 'statusSaving';
 	renderAll();
-	await elements.mapImage.decode().catch(() => undefined);
-	send('dungeongen:autosave', {
-		projectId: currentProjectId,
-		projectBase64: projectBase64(),
-		previewBase64: await makePreviewBase64()
-	});
+	await autosaveCurrent();
 }
 
-function updateAppearance() {
+async function updateAppearance() {
 	appearanceUpdateTimer = null;
 	if (!currentProject?.renderSvg) return;
-	currentProject.appearance = normalizeAppearance(readAppearance());
+	const nextAppearance = normalizeAppearance(readAppearance());
+	if (JSON.stringify(nextAppearance) === JSON.stringify(currentProject.appearance)) {
+		pendingAppearanceSnapshot = null;
+		return;
+	}
+	pushHistory(pendingAppearanceSnapshot ?? cloneProject());
+	pendingAppearanceSnapshot = null;
+	currentProject.appearance = nextAppearance;
 	setProjectImage(currentProject.renderSvg, false);
-	void saveAppearance();
+	await saveAppearance();
 }
 
 function scheduleAppearanceUpdate() {
 	if (!currentProject?.renderSvg) return;
+	if (!pendingAppearanceSnapshot) pendingAppearanceSnapshot = cloneProject();
 	if (appearanceUpdateTimer) clearTimeout(appearanceUpdateTimer);
-	appearanceUpdateTimer = setTimeout(updateAppearance, colorApplyDelayMs);
+	appearanceUpdateTimer = setTimeout(() => void updateAppearance(), colorApplyDelayMs);
 }
 
 elements.createProjectForm.addEventListener('submit', (event) => {
@@ -607,25 +961,102 @@ elements.exportButton.addEventListener('click', async () => {
 });
 elements.backButton.addEventListener('click', () => send('dungeongen:back'));
 elements.themeToggle.addEventListener('click', toggleTheme);
+elements.undoEdit.addEventListener('click', () => void undoEdit());
+elements.redoEdit.addEventListener('click', () => void redoEdit());
 elements.zoomIn.addEventListener('click', () => zoom(1.2));
 elements.zoomOut.addEventListener('click', () => zoom(1 / 1.2));
 elements.fitMap.addEventListener('click', fitMap);
 elements.mapImage.addEventListener('load', () => {
+	syncEditOverlaySize();
 	if (fitImageOnLoad) fitMap();
 });
 elements.canvas.addEventListener('wheel', (event) => { event.preventDefault(); zoom(event.deltaY < 0 ? 1.1 : 1 / 1.1); }, { passive: false });
 elements.canvas.addEventListener('pointerdown', (event) => {
+	if (activePanel === 'editing' && canEditMap() && event.button === 0) {
+		const cell = eventCell(event);
+		if (!cell) return;
+		event.preventDefault();
+		editGesture = {
+			tool: activeTool, start: cell, current: cell, last: cell,
+			shift: event.shiftKey, cells: new Set([cellKey(cell)]), pointerId: event.pointerId
+		};
+		elements.canvas.setPointerCapture(event.pointerId);
+		renderEditPreview(gestureCells(editGesture, cell, event.shiftKey), activeTool);
+		return;
+	}
 	pointerStart = { x: event.clientX, y: event.clientY, panX, panY };
 	elements.canvas.setPointerCapture(event.pointerId);
 	elements.canvas.classList.add('panning');
 });
 elements.canvas.addEventListener('pointermove', (event) => {
+	if (editGesture) {
+		const cell = eventCell(event);
+		if (!cell) return;
+		if (editGesture.tool === 'wall' || editGesture.tool === 'corridor') {
+			for (const pathCell of lineCells(editGesture.last, cell)) editGesture.cells.add(cellKey(pathCell));
+		}
+		editGesture.last = cell;
+		editGesture.current = cell;
+		renderEditPreview(gestureCells(editGesture, cell, event.shiftKey), editGesture.tool);
+		return;
+	}
+	if (activePanel === 'editing' && canEditMap()) {
+		const cell = eventCell(event);
+		renderEditPreview(cell ? (activeTool === 'roundRoom' ? roundPreview(cell, 1) : [cell]) : [], activeTool);
+	}
 	if (!pointerStart) return;
 	panX = pointerStart.panX + event.clientX - pointerStart.x;
 	panY = pointerStart.panY + event.clientY - pointerStart.y;
 	updateTransform();
 });
-elements.canvas.addEventListener('pointerup', () => { pointerStart = null; elements.canvas.classList.remove('panning'); });
+elements.canvas.addEventListener('pointerup', (event) => {
+	if (editGesture) {
+		const gesture = editGesture;
+		const current = eventCell(event) ?? gesture.current;
+		const cells = gestureCells(gesture, current, event.shiftKey);
+		editGesture = null;
+		if (elements.canvas.hasPointerCapture(event.pointerId)) elements.canvas.releasePointerCapture(event.pointerId);
+		renderEditPreview(cells, gesture.tool);
+		if (gesture.tool === 'wall' || gesture.tool === 'corridor') {
+			void commitStructure({ type: 'paint', mode: gesture.tool, cells });
+		} else if (gesture.tool === 'roundRoom') {
+			const radius = Math.max(1, Math.abs(current[0] - gesture.start[0]), Math.abs(current[1] - gesture.start[1]));
+			void commitStructure({ type: 'roundRoom', center: gesture.start, radius });
+		} else {
+			void commitStructure({ type: 'toggleRoom', cell: current });
+		}
+		return;
+	}
+	pointerStart = null;
+	elements.canvas.classList.remove('panning');
+});
+elements.canvas.addEventListener('pointercancel', () => {
+	editGesture = null;
+	pointerStart = null;
+	elements.canvas.classList.remove('panning');
+	renderEditPreview();
+});
+elements.canvas.addEventListener('pointerleave', () => {
+	if (!editGesture) renderEditPreview();
+});
+elements.canvas.addEventListener('contextmenu', (event) => {
+	if (activePanel === 'editing') event.preventDefault();
+});
+document.addEventListener('keydown', async (event) => {
+	if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+	const target = event.target;
+	if (target instanceof HTMLElement && (target.matches('textarea, select, input:not([type="color"])') || target.isContentEditable)) return;
+	const redo = event.code === 'KeyY' || (event.code === 'KeyZ' && event.shiftKey);
+	if (event.code !== 'KeyZ' && event.code !== 'KeyY') return;
+	event.preventDefault();
+	if (appearanceUpdateTimer) {
+		clearTimeout(appearanceUpdateTimer);
+		appearanceUpdateTimer = null;
+		await updateAppearance();
+	}
+	if (redo) await redoEdit();
+	else await undoEdit();
+});
 window.addEventListener('resize', () => currentProject?.renderSvg && fitMap());
 window.addEventListener('message', (event) => {
 	if (event.source !== window.parent || !event.data || typeof event.data !== 'object') return;

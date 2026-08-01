@@ -17,6 +17,7 @@ from dungeongen.graphics.conversions import grid_to_map, map_to_grid_rect
 from dungeongen.map.enums import Layers, RoomDirection
 from dungeongen.map.mapelement import MapElement
 from dungeongen.constants import CELL_SIZE
+from dungeongen.fonts import get_number_typeface
 
 # Base corner size as fraction of cell size
 CORNER_SIZE = 0.35
@@ -177,29 +178,6 @@ class Room(MapElement):
             self._draw_number(canvas)
         super().draw(canvas, layer)
     
-    # Class-level font cache
-    _number_typeface: 'skia.Typeface' = None
-    
-    @classmethod
-    def _get_number_typeface(cls) -> 'skia.Typeface':
-        """Get or load the Roboto Condensed typeface (weight 400)."""
-        if cls._number_typeface is None:
-            import os
-            # Load from fonts directory
-            font_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'fonts')
-            font_path = os.path.join(font_dir, 'RobotoCondensed-Regular.ttf')
-            
-            if not os.path.exists(font_path):
-                raise FileNotFoundError(f"Font file not found: {font_path}")
-            
-            cls._number_typeface = skia.Typeface.MakeFromFile(font_path)
-            
-            if cls._number_typeface is None:
-                raise RuntimeError(f"Failed to load font from: {font_path}")
-            
-            print(f"[Room] Loaded font: {cls._number_typeface.getFamilyName()} from {font_path}")
-        return cls._number_typeface
-    
     def _draw_number(self, canvas: 'skia.Canvas') -> None:
         """Draw the room number in the center of the room as a path (for SVG compatibility)."""
         if self._number <= 0:
@@ -213,7 +191,7 @@ class Room(MapElement):
         font_size = 54
         
         # Create font - Roboto Condensed (loaded from file)
-        typeface = self._get_number_typeface()
+        typeface = get_number_typeface()
         font = skia.Font(typeface, font_size)
         
         # Create paint for text path

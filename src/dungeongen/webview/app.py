@@ -6,10 +6,12 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import re
 import secrets
 import time
 from pathlib import Path
+from typing import Any
 
 from flask import Flask, Response, jsonify, redirect, request, send_from_directory
 
@@ -17,6 +19,7 @@ from .project import (
     MAX_PROJECT_BYTES,
     ProjectValidationError,
     default_project,
+    edit_project,
     generate_project,
     parse_project_bytes,
     project_bytes,
@@ -26,10 +29,12 @@ from .project import (
 EDITOR_ROOT = Path(__file__).with_name("editor")
 SERVICE_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config.json"
 LOCALE_PATTERN = re.compile(r"^[a-z]{2}(?:-[A-Z]{2})?$")
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 DEFAULT_COLOR_APPLY_DELAY_MS = 350
+DEFAULT_EDIT_PREVIEW_DELAY_MS = 1000
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = MAX_PROJECT_BYTES
+app.config["MAX_CONTENT_LENGTH"] = MAX_PROJECT_BYTES + 512 * 1024
 _CAPABILITY_TTL_SECONDS = 60 * 60
 _CAPABILITY_SECRET = secrets.token_bytes(32)
 
@@ -38,17 +43,38 @@ def _json_error(code: str, status: int) -> tuple[Response, int]:
     return jsonify({"success": False, "error": code}), status
 
 
-def _public_editor_config() -> dict[str, int]:
-    value: object = {}
-    if SERVICE_CONFIG_PATH.is_file():
+def _service_config() -> dict[str, Any]:
+    candidates = (SERVICE_CONFIG_PATH, Path.cwd() / "config.json")
+    for path in candidates:
+        if not path.is_file():
+            continue
         try:
-            value = json.loads(SERVICE_CONFIG_PATH.read_text(encoding="utf-8"))
+            value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            value = {}
-    raw_delay = value.get("colorApplyDelayMs") if isinstance(value, dict) else None
+            continue
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def _logging_enabled(config: dict[str, Any], key: str) -> bool:
+    logging_config = config.get("logging")
+    return isinstance(logging_config, dict) and logging_config.get(key) is True
+
+
+def _public_editor_config() -> dict[str, int | bool]:
+    value = _service_config()
+    raw_delay = value.get("colorApplyDelayMs")
     if isinstance(raw_delay, bool) or not isinstance(raw_delay, (int, float)):
         raw_delay = DEFAULT_COLOR_APPLY_DELAY_MS
-    return {"colorApplyDelayMs": max(0, min(5000, int(raw_delay)))}
+    raw_preview_delay = value.get("editPreviewDelayMs")
+    if isinstance(raw_preview_delay, bool) or not isinstance(raw_preview_delay, (int, float)):
+        raw_preview_delay = DEFAULT_EDIT_PREVIEW_DELAY_MS
+    return {
+        "colorApplyDelayMs": max(0, min(5000, int(raw_delay))),
+        "editPreviewDelayMs": max(0, min(10000, int(raw_preview_delay))),
+        "editTimeLogging": _logging_enabled(value, "EDIT_TIME_LOGGING"),
+    }
 
 
 def _editor_response(filename: str, mimetype: str) -> Response:
@@ -165,6 +191,90 @@ def generate() -> tuple[Response, int] | Response:
     return jsonify({"success": True, "project": project})
 
 
+@app.post("/dungeon-editor/api/edit")
+@app.post("/api/dungeongen/editor/edit")
+def edit() -> tuple[Response, int] | Response:
+    provided_request_id = request.headers.get("X-Dungeongen-Request-Id", "")
+    request_id = (
+        provided_request_id
+        if REQUEST_ID_PATTERN.fullmatch(provided_request_id)
+        else secrets.token_hex(4)
+    )
+    service_config = _service_config()
+    editing_logging = _logging_enabled(service_config, "EDITING_LOGGING")
+    edit_time_logging = _logging_enabled(service_config, "EDIT_TIME_LOGGING")
+    if (editing_logging or edit_time_logging) and app.logger.getEffectiveLevel() > logging.INFO:
+        app.logger.setLevel(logging.INFO)
+    if not _has_valid_capability():
+        if editing_logging:
+            app.logger.info("[EDITING] rejected id=%s path=%s reason=unauthorized", request_id, request.path)
+        return _json_error("unauthorized", 401)
+    request_started_at = time.perf_counter()
+    decode_started_at = time.perf_counter()
+    data = request.get_json(silent=True)
+    decode_elapsed_ms = (time.perf_counter() - decode_started_at) * 1000
+    operation = data.get("operation") if isinstance(data, dict) else None
+    operation_type = operation.get("type") if isinstance(operation, dict) else "invalid"
+    started_at = request_started_at
+
+    timing_entries: list[tuple[str, float]] = []
+
+    def record_timing(stage: str, elapsed_ms: float) -> None:
+        timing_entries.append((stage, elapsed_ms))
+
+    def flush_timings() -> None:
+        for stage, elapsed_ms in timing_entries:
+            app.logger.info(
+                "[EDIT-TIME] id=%s operation=%s stage=%s elapsed_ms=%.2f",
+                request_id, operation_type, stage, elapsed_ms,
+            )
+
+    timing = record_timing if edit_time_logging else None
+    if timing is not None:
+        timing("request_decode", decode_elapsed_ms)
+    if editing_logging:
+        app.logger.info(
+            "[EDITING] started id=%s path=%s operation=%s bytes=%s",
+            request_id, request.path, operation_type, request.content_length or 0,
+        )
+    try:
+        project = edit_project(data, timing=timing, validate_size=False)
+        encoded_project = project_bytes(project, timing=timing, normalize=False)
+    except ProjectValidationError as error:
+        if editing_logging:
+            app.logger.info(
+                "[EDITING] rejected id=%s operation=%s error=%s elapsed_ms=%d",
+                request_id, operation_type, str(error), int((time.perf_counter() - started_at) * 1000),
+            )
+        if timing is not None:
+            timing("request_handler_total", (time.perf_counter() - request_started_at) * 1000)
+            flush_timings()
+        return _json_error(str(error), 400)
+    except Exception:
+        app.logger.exception("[EDITING] failed id=%s operation=%s", request_id, operation_type)
+        if timing is not None:
+            timing("request_handler_total", (time.perf_counter() - request_started_at) * 1000)
+            flush_timings()
+        return _json_error("editFailed", 500)
+    if editing_logging:
+        structure = project.get("structure") or {}
+        app.logger.info(
+            "[EDITING] completed id=%s operation=%s cells=%d rooms=%d elapsed_ms=%d",
+            request_id, operation_type, len(structure.get("floorCells", [])),
+            len(structure.get("rooms", [])), int((time.perf_counter() - started_at) * 1000),
+        )
+    response_started_at = time.perf_counter()
+    response = Response(
+        b'{"success":true,"project":' + encoded_project + b"}",
+        mimetype="application/json",
+    )
+    if timing is not None:
+        timing("response_serialization", (time.perf_counter() - response_started_at) * 1000)
+        timing("request_handler_total", (time.perf_counter() - request_started_at) * 1000)
+        flush_timings()
+    return response
+
+
 @app.post("/api/dungeongen/projects/default")
 def create_default_project() -> Response:
     return Response(project_bytes(default_project()), mimetype="application/json")
@@ -190,5 +300,5 @@ def export_project() -> tuple[Response, int] | Response:
 
 
 if __name__ == "__main__":
-    config = json.loads(SERVICE_CONFIG_PATH.read_text(encoding="utf-8")) if SERVICE_CONFIG_PATH.is_file() else {}
+    config = _service_config()
     app.run(host="0.0.0.0", port=int(config.get("port", 5050)), threaded=True, use_reloader=False)

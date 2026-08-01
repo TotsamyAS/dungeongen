@@ -493,6 +493,46 @@ def generate_hatch_tile(
     )
 
 
+def draw_crosshatches_clipped_tiled(
+    canvas: 'skia.Canvas',
+    shape: 'Shape',
+    tile: HatchTileData,
+    options: Options,
+    line_paint: Optional['skia.Paint'] = None,
+) -> None:
+    """Fast SVG path: repeat deterministic hatch lines and clip once in Skia."""
+    import skia
+
+    if line_paint is None:
+        line_paint = skia.Paint(
+            AntiAlias=True,
+            StrokeWidth=options.crosshatch_stroke_width,
+            Color=options.crosshatch_color,
+            Style=skia.Paint.kStroke_Style,
+        )
+
+    bounds = shape.bounds
+    tile_size = tile.tile_size
+    min_tile_x = int(math.floor(bounds.x / tile_size))
+    min_tile_y = int(math.floor(bounds.y / tile_size))
+    max_tile_x = int(math.ceil((bounds.x + bounds.width) / tile_size))
+    max_tile_y = int(math.ceil((bounds.y + bounds.height) / tile_size))
+    path = skia.Path()
+    for tile_y in range(min_tile_y, max_tile_y + 1):
+        origin_y = tile_y * tile_size
+        for tile_x in range(min_tile_x, max_tile_x + 1):
+            origin_x = tile_x * tile_size
+            for lines in tile.point_lines:
+                for (x1, y1), (x2, y2) in lines:
+                    path.moveTo(origin_x + x1, origin_y + y1)
+                    path.lineTo(origin_x + x2, origin_y + y2)
+
+    canvas.save()
+    canvas.clipPath(shape.path, skia.ClipOp.kIntersect, True)
+    canvas.drawPath(path, line_paint)
+    canvas.restore()
+
+
 def draw_crosshatches_tiled(
     canvas: 'skia.Canvas',
     shape: 'Shape',

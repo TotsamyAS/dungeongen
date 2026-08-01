@@ -3,5 +3,10 @@
 	"workers": 2,
 	"threads": 2,
 	"requestTimeoutSeconds": 180,
-	"colorApplyDelayMs": 200
+	"colorApplyDelayMs": 200,
+	"editPreviewDelayMs": 1000,
+	"logging": {
+		"EDITING_LOGGING": false,
+		"EDIT_TIME_LOGGING": true
+	}
 }

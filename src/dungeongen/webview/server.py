@@ -11,7 +11,7 @@ from .app import app
 
 
 def load_config() -> dict[str, int]:
-    candidates = (Path.cwd() / "config.json", Path(__file__).resolve().parents[3] / "config.json")
+    candidates = (Path(__file__).resolve().parents[3] / "config.json", Path.cwd() / "config.json")
     for path in candidates:
         if path.is_file():
             with path.open("r", encoding="utf-8") as source:
@@ -34,6 +34,7 @@ class DungeongenApplication(BaseApplication):
             "threads": service["threads"],
             "timeout": service["timeout"],
             "preload_app": True,
+            "worker_tmp_dir": "/tmp",
             "accesslog": "-",
             "errorlog": "-",
         }

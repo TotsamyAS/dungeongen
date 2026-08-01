@@ -2,7 +2,9 @@
 
 import math
 import random
-from typing import Generic, Iterator, List, Optional, Sequence, Tuple, TypeVar, TYPE_CHECKING
+import threading
+import time
+from typing import Callable, Generic, Iterator, List, Optional, Sequence, Tuple, TypeVar, TYPE_CHECKING
 from dungeongen.map.enums import Tags
 from dungeongen.logging_config import logger, LogTags
 from dungeongen.debug_config import debug_draw, DebugDrawFlags
@@ -11,9 +13,15 @@ import skia
 
 from dungeongen.graphics.shapes import Circle, Rectangle, Shape, ShapeGroup
 from dungeongen.constants import CELL_SIZE
+from dungeongen.fonts import get_number_typeface
 from dungeongen.graphics.conversions import grid_to_map
 from dungeongen.drawing.crosshatch import draw_crosshatches
-from dungeongen.drawing.crosshatch_tiled import draw_crosshatches_tiled, generate_hatch_tile, HatchTileData
+from dungeongen.drawing.crosshatch_tiled import (
+    HatchTileData,
+    draw_crosshatches_clipped_tiled,
+    draw_crosshatches_tiled,
+    generate_hatch_tile,
+)
 from dungeongen.drawing.water import WaterStyle
 from dungeongen.map.enums import Layers
 from typing import Generic, Iterator, List, Optional, Sequence, Tuple, TypeVar, TYPE_CHECKING
@@ -46,6 +54,8 @@ REGION_INFLATE = CELL_SIZE * 0.025
 TMapElement = TypeVar('TMapElement', bound='MapElement')
 
 _invalid_map: Optional['Map'] = None
+_hatch_tile_cache: dict[tuple[float, int, float, float], HatchTileData] = {}
+_hatch_tile_cache_lock = threading.Lock()
 
 class Map:
     """Container for all map elements with type-specific access."""
@@ -59,6 +69,8 @@ class Map:
         self._hatch_tile: Optional[HatchTileData] = None  # Cached crosshatch tile
         self._water_layer: Optional[WaterLayer] = None  # Water generation layer
         self._water_depth: float = WaterDepth.DRY  # Water depth level (0 = disabled)
+        self._region_include_shapes: List[Shape] = []
+        self._region_exclude_shapes: List[Shape] = []
     
     @staticmethod
     def get_invalid_map() -> 'Map':
@@ -77,7 +89,17 @@ class Map:
     def hatch_tile(self) -> HatchTileData:
         """Get cached crosshatch tile, generating if needed."""
         if self._hatch_tile is None:
-            self._hatch_tile = generate_hatch_tile(self._options, grid_cells=4, seed=4242)
+            key = (
+                float(self._options.crosshatch_stroke_spacing),
+                int(self._options.crosshatch_strokes_per_cluster),
+                float(self._options.crosshatch_angle_variation),
+                float(self._options.crosshatch_length_variation),
+            )
+            with _hatch_tile_cache_lock:
+                self._hatch_tile = _hatch_tile_cache.get(key)
+                if self._hatch_tile is None:
+                    self._hatch_tile = generate_hatch_tile(self._options, grid_cells=4, seed=4242)
+                    _hatch_tile_cache[key] = self._hatch_tile
         return self._hatch_tile
     
     def set_water(self, depth: float, seed: int = 42, lf_scale: float = 0.018, resolution_scale: float = 0.2,
@@ -102,6 +124,11 @@ class Map:
             self._water_seed = seed
         else:
             self._water_layer = None
+
+    def set_region_shape_edits(self, includes: Sequence[Shape], excludes: Sequence[Shape]) -> None:
+        """Apply structural floor additions/removals to the final connected region shape."""
+        self._region_include_shapes = list(includes)
+        self._region_exclude_shapes = list(excludes)
     
     @property
     def water_layer(self) -> Optional[WaterLayer]:
@@ -337,6 +364,19 @@ class Map:
                     elements=final_elements
                 ))
         
+        if self._region_include_shapes or self._region_exclude_shapes:
+            shapes = [region.shape for region in regions]
+            shapes.extend(shape.inflated(REGION_INFLATE) for shape in self._region_include_shapes)
+            combined = ShapeGroup.combine(shapes)
+            combined.excludes.extend(self._region_exclude_shapes)
+            elements = []
+            seen = set()
+            for region in regions:
+                for element in region.elements:
+                    if element not in seen:
+                        seen.add(element)
+                        elements.append(element)
+            regions = [Region(shape=combined, elements=elements)] if combined.includes else []
         return regions
 
     def calculate_fit_transform(self, canvas_width: int, canvas_height: int) -> skia.Matrix:
@@ -417,7 +457,14 @@ class Map:
         for idx, element in enumerate(self._elements):
             element.draw_occupied(self.occupancy, idx)    
 
-    def render(self, canvas: skia.Canvas, transform: Optional[skia.Matrix] = None) -> None:
+    def render(
+        self,
+        canvas: skia.Canvas,
+        transform: Optional[skia.Matrix] = None,
+        *,
+        timing: Optional[Callable[[str, float], None]] = None,
+        fast_crosshatch: bool = False,
+    ) -> None:
         """Render the map to a canvas.
         
         Args:
@@ -426,7 +473,15 @@ class Map:
                       If None, calculates a transform to fit the map in the canvas.
         """
         if self.is_invalid:
-            raise ValueError("Cannot render the 'invalid' map")          
+            raise ValueError("Cannot render the 'invalid' map")
+
+        def stage(name: str, started_at: float) -> float:
+            now = time.perf_counter()
+            if timing is not None:
+                timing(name, (now - started_at) * 1000)
+            return now
+
+        stage_started_at = time.perf_counter()
         # Get canvas dimensions
         canvas_width = canvas.imageInfo().width()
         canvas_height = canvas.imageInfo().height()
@@ -442,6 +497,7 @@ class Map:
             skia.Rect.MakeWH(canvas_width, canvas_height),
             background_paint
         )
+        stage_started_at = stage("render_background", stage_started_at)
         
         # Get all regions and create crosshatch shape
         regions = self._make_regions()
@@ -452,6 +508,7 @@ class Map:
         
         # Combine all regions into single crosshatch shape
         crosshatch_shape = ShapeGroup.combine(crosshatch_shapes)
+        stage_started_at = stage("render_regions", stage_started_at)
         
         # Save canvas state and apply transform
         canvas.save()
@@ -466,10 +523,21 @@ class Map:
         crosshatch_shape.draw(canvas, shading_paint)
         
         # Draw crosshatching pattern using optimized tiled system
-        draw_crosshatches_tiled(canvas, crosshatch_shape, self.hatch_tile, self.options)
-        
+        if fast_crosshatch:
+            draw_crosshatches_clipped_tiled(canvas, crosshatch_shape, self.hatch_tile, self.options)
+        else:
+            draw_crosshatches_tiled(canvas, crosshatch_shape, self.hatch_tile, self.options)
+        stage_started_at = stage("render_crosshatch", stage_started_at)
+
+        region_base_ms = 0.0
+        region_shadows_ms = 0.0
+        region_grid_ms = 0.0
+        region_water_ms = 0.0
+        region_props_ms = 0.0
+
         # Draw room regions
         for region in regions:
+            layer_started_at = time.perf_counter()
             # 1. Save state and apply clip
             canvas.save()
             
@@ -499,16 +567,22 @@ class Map:
             )
             region.shape.draw(canvas, room_paint)
             canvas.restore()
+            region_base_ms += (time.perf_counter() - layer_started_at) * 1000
 
             # 5. Draw region element shadows
+            layer_started_at = time.perf_counter()
             for element in region.elements:
                 element.draw(canvas, Layers.SHADOW)
+            region_shadows_ms += (time.perf_counter() - layer_started_at) * 1000
 
             # 5. Draw grid if enabled (still clipped by mask)
+            layer_started_at = time.perf_counter()
             if self.options.grid_style not in (None, GridStyle.NONE):
                 draw_region_grid(canvas, region, self.options)
+            region_grid_ms += (time.perf_counter() - layer_started_at) * 1000
 
             # 5.5. Draw water if enabled (clipped by region shape)
+            layer_started_at = time.perf_counter()
             if self.water_layer and self.water_layer.shapes:
                 # Translate water to map coordinates (water is generated at 0,0)
                 canvas.save()
@@ -531,14 +605,24 @@ class Map:
                 self.water_layer.draw(canvas, style=water_style)
                 
                 canvas.restore()
+            region_water_ms += (time.perf_counter() - layer_started_at) * 1000
 
             # 6. Draw region elements props
+            layer_started_at = time.perf_counter()
             for element in region.elements:
                 element.draw(canvas, Layers.PROPS)
+            region_props_ms += (time.perf_counter() - layer_started_at) * 1000
 
             # 7. Restore transform and clear clip mask
             canvas.restore()
-            
+        if timing is not None:
+            timing("render_region_base", region_base_ms)
+            timing("render_region_shadows", region_shadows_ms)
+            timing("render_region_grid", region_grid_ms)
+            timing("render_region_water", region_water_ms)
+            timing("render_region_props", region_props_ms)
+        stage_started_at = stage("render_region_layers", stage_started_at)
+
         # Draw region borders with rounded corners
         border_paint = skia.Paint(
             AntiAlias=True,
@@ -555,10 +639,12 @@ class Map:
             
         # Draw the unified border path
         canvas.drawPath(unified_border, border_paint)
+        stage_started_at = stage("render_borders", stage_started_at)
 
         # Draw doors layer after borders
         for element in self._elements:
             element.draw(canvas, Layers.OVERLAY)
+        stage_started_at = stage("render_overlays", stage_started_at)
 
         # Draw text layer (room numbers)
         for element in self._elements:
@@ -570,7 +656,7 @@ class Map:
                 Color=skia.Color(0, 0, 0),  # Black text
                 AntiAlias=True
             )
-            font = skia.Font(skia.Typeface('Arial'), CELL_SIZE/2)
+            font = skia.Font(get_number_typeface(), CELL_SIZE/2)
             
             for idx, element in enumerate(self._elements):
                 # Get element center
@@ -590,6 +676,7 @@ class Map:
                     font,
                     number_paint
                 )
+        stage_started_at = stage("render_text", stage_started_at)
 
         # Restore canvas state
         canvas.restore()

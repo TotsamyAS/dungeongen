@@ -1,0 +1,242 @@
+[
+	{
+		"id": "classic",
+		"labelKey": "paletteClassic",
+		"colors": {
+			"background": "#ffffff",
+			"floor": "#ffffff",
+			"walls": "#000000",
+			"hatching": "#000000",
+			"shading": "#d0d2d5",
+			"shadow": "#d0d0d0",
+			"grid": "#202020",
+			"water": "#505050",
+			"numbers": "#000000"
+		}
+	},
+	{
+		"id": "parchment",
+		"labelKey": "paletteParchment",
+		"colors": {
+			"background": "#d8c69b",
+			"floor": "#f5e8c6",
+			"walls": "#3d2a1c",
+			"hatching": "#75583b",
+			"shading": "#c8ad77",
+			"shadow": "#9b7b50",
+			"grid": "#96764f",
+			"water": "#66858b",
+			"numbers": "#4a2d1c"
+		}
+	},
+	{
+		"id": "sepia",
+		"labelKey": "paletteSepia",
+		"colors": {
+			"background": "#6e4c32",
+			"floor": "#d5b889",
+			"walls": "#24160f",
+			"hatching": "#6b4329",
+			"shading": "#a27c50",
+			"shadow": "#513522",
+			"grid": "#765031",
+			"water": "#55777a",
+			"numbers": "#2a170f"
+		}
+	},
+	{
+		"id": "obsidian",
+		"labelKey": "paletteObsidian",
+		"colors": {
+			"background": "#090b10",
+			"floor": "#272c35",
+			"walls": "#d7b36a",
+			"hatching": "#77603d",
+			"shading": "#171b22",
+			"shadow": "#030405",
+			"grid": "#525b68",
+			"water": "#244f67",
+			"numbers": "#ffe0a0"
+		}
+	},
+	{
+		"id": "glacial",
+		"labelKey": "paletteGlacial",
+		"colors": {
+			"background": "#b8d4df",
+			"floor": "#eaf8fa",
+			"walls": "#244451",
+			"hatching": "#6f9cac",
+			"shading": "#a6c9d5",
+			"shadow": "#769aa8",
+			"grid": "#7397a4",
+			"water": "#287aa0",
+			"numbers": "#173844"
+		}
+	},
+	{
+		"id": "moss",
+		"labelKey": "paletteMoss",
+		"colors": {
+			"background": "#252b1f",
+			"floor": "#a7ad78",
+			"walls": "#202317",
+			"hatching": "#59623e",
+			"shading": "#7c8559",
+			"shadow": "#3f472f",
+			"grid": "#626b49",
+			"water": "#3d7470",
+			"numbers": "#202317"
+		}
+	},
+	{
+		"id": "sandstone",
+		"labelKey": "paletteSandstone",
+		"colors": {
+			"background": "#caa975",
+			"floor": "#ead2a2",
+			"walls": "#5b3b27",
+			"hatching": "#99734b",
+			"shading": "#d2b37d",
+			"shadow": "#9e7650",
+			"grid": "#aa8459",
+			"water": "#477f91",
+			"numbers": "#4a2f20"
+		}
+	},
+	{
+		"id": "moonlit",
+		"labelKey": "paletteMoonlit",
+		"colors": {
+			"background": "#101827",
+			"floor": "#27364d",
+			"walls": "#d8e3f0",
+			"hatching": "#7086a2",
+			"shading": "#1b283b",
+			"shadow": "#080d16",
+			"grid": "#536983",
+			"water": "#2b6e9b",
+			"numbers": "#f2f6fb"
+		}
+	},
+	{
+		"id": "infernal",
+		"labelKey": "paletteInfernal",
+		"colors": {
+			"background": "#160606",
+			"floor": "#49201a",
+			"walls": "#ffb45f",
+			"hatching": "#9d3f27",
+			"shading": "#2b0d0b",
+			"shadow": "#080202",
+			"grid": "#7d2d20",
+			"water": "#7d1918",
+			"numbers": "#ffd49a"
+		}
+	},
+	{
+		"id": "royal",
+		"labelKey": "paletteRoyal",
+		"colors": {
+			"background": "#181128",
+			"floor": "#493a68",
+			"walls": "#e7c875",
+			"hatching": "#8b72a8",
+			"shading": "#302348",
+			"shadow": "#0c0715",
+			"grid": "#75628f",
+			"water": "#315b83",
+			"numbers": "#fff0b0"
+		}
+	},
+	{
+		"id": "verdigris",
+		"labelKey": "paletteVerdigris",
+		"colors": {
+			"background": "#17322f",
+			"floor": "#9bb9a5",
+			"walls": "#17302c",
+			"hatching": "#4e746a",
+			"shading": "#719688",
+			"shadow": "#294d45",
+			"grid": "#5b8276",
+			"water": "#287f86",
+			"numbers": "#102724"
+		}
+	},
+	{
+		"id": "blood-moon",
+		"labelKey": "paletteBloodMoon",
+		"colors": {
+			"background": "#190b12",
+			"floor": "#5d2935",
+			"walls": "#f0c6bf",
+			"hatching": "#8c4756",
+			"shading": "#351621",
+			"shadow": "#090306",
+			"grid": "#78404b",
+			"water": "#3c506e",
+			"numbers": "#ffe0da"
+		}
+	},
+	{
+		"id": "blueprint",
+		"labelKey": "paletteBlueprint",
+		"colors": {
+			"background": "#17426c",
+			"floor": "#1f5689",
+			"walls": "#f2f7f7",
+			"hatching": "#8fc2da",
+			"shading": "#1a4a77",
+			"shadow": "#0e2d4d",
+			"grid": "#7fb4cf",
+			"water": "#68c3d7",
+			"numbers": "#ffffff"
+		}
+	},
+	{
+		"id": "amethyst",
+		"labelKey": "paletteAmethyst",
+		"colors": {
+			"background": "#24152f",
+			"floor": "#6e557e",
+			"walls": "#eadcf0",
+			"hatching": "#a88bb3",
+			"shading": "#493557",
+			"shadow": "#150b1d",
+			"grid": "#9278a0",
+			"water": "#426f91",
+			"numbers": "#f9ecff"
+		}
+	},
+	{
+		"id": "volcanic",
+		"labelKey": "paletteVolcanic",
+		"colors": {
+			"background": "#0d0d0e",
+			"floor": "#333235",
+			"walls": "#ee6b37",
+			"hatching": "#75402f",
+			"shading": "#202023",
+			"shadow": "#050506",
+			"grid": "#5d4b47",
+			"water": "#244b60",
+			"numbers": "#ffc18f"
+		}
+	},
+	{
+		"id": "forest-temple",
+		"labelKey": "paletteForestTemple",
+		"colors": {
+			"background": "#172019",
+			"floor": "#8f9b72",
+			"walls": "#d5c898",
+			"hatching": "#586547",
+			"shading": "#667153",
+			"shadow": "#293126",
+			"grid": "#6d7757",
+			"water": "#356e68",
+			"numbers": "#f2e8bd"
+		}
+	}
+]

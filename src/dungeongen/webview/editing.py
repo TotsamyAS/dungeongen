@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import uuid
 from collections import deque
 from typing import Any, Iterable
@@ -278,6 +279,29 @@ def normalize_structure(value: Any, layout: Any) -> dict[str, Any] | None:
             isinstance(size, bool) or not isinstance(size, (int, float)) or size <= 0 or size > 2
         ):
             raise ProjectValidationError("invalidProject")
+        raw_shape = raw.get("shape")
+        shape: list[list[float]] | None = None
+        if raw_shape is not None:
+            if raw["type"] not in ("rock_small", "rock_medium", "rock_large") or not isinstance(raw_shape, list):
+                raise ProjectValidationError("invalidProject")
+            if len(raw_shape) != 8:
+                raise ProjectValidationError("invalidProject")
+            shape = []
+            for point in raw_shape:
+                if (
+                    not isinstance(point, list)
+                    or len(point) != 2
+                    or isinstance(point[0], bool)
+                    or isinstance(point[1], bool)
+                    or not isinstance(point[0], (int, float))
+                    or not isinstance(point[1], (int, float))
+                    or not math.isfinite(float(point[0]))
+                    or not math.isfinite(float(point[1]))
+                    or abs(float(point[0])) > 2
+                    or abs(float(point[1])) > 2
+                ):
+                    raise ProjectValidationError("invalidProject")
+                shape.append([round(float(point[0]), 6), round(float(point[1]), 6)])
         descriptor = {
             "id": object_id,
             "type": raw["type"],
@@ -289,6 +313,8 @@ def normalize_structure(value: Any, layout: Any) -> dict[str, Any] | None:
         }
         if size is not None:
             descriptor["size"] = round(float(size), 4)
+        if shape is not None:
+            descriptor["shape"] = shape
         objects.append(descriptor)
     raw_water_cells = value.get("waterCells", [])
     if not isinstance(raw_water_cells, list):
@@ -562,7 +588,21 @@ def _place_dungeon_object(
         raise ProjectValidationError("invalidPlacement")
     direction = ROTATION_DIRECTIONS[rotation]
     facing = ((0, -1), (1, 0), (0, 1), (-1, 0))[rotation]
-    if collection in ("doors", "exits") and (cell[0] + facing[0], cell[1] + facing[1]) in floor:
+    if collection == "doors":
+        inside_room = any(
+            room.get("suppressed") is not True
+            and any(tuple(value) == cell for value in room.get("cells", []))
+            for room in structure.get("rooms", [])
+            if isinstance(room, dict)
+        )
+        opposite = (-facing[0], -facing[1])
+        if (
+            inside_room
+            or (cell[0] + facing[0], cell[1] + facing[1]) not in floor
+            or (cell[0] + opposite[0], cell[1] + opposite[1]) not in floor
+        ):
+            raise ProjectValidationError("invalidPlacement")
+    elif collection == "exits" and (cell[0] + facing[0], cell[1] + facing[1]) in floor:
         raise ProjectValidationError("invalidPlacement")
     item = {
         "id": uuid.uuid4().hex[:12], "x": cell[0], "y": cell[1], "direction": direction,

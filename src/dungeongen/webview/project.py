@@ -710,6 +710,10 @@ def _prop_descriptor(prop: Any, map_bounds: tuple[int, int, int, int], index: in
     }
     if size is not None:
         descriptor["size"] = round(size, 4)
+        descriptor["shape"] = [
+            [round(float(point[0]) / CELL_SIZE, 6), round(float(point[1]) / CELL_SIZE, 6)]
+            for point in prop._control_points
+        ]
     return descriptor
 
 
@@ -748,6 +752,7 @@ def materialize_project_objects(project: dict[str, Any]) -> None:
     structure["objectsInitialized"] = True
 
 
+
 def _make_persisted_prop(item: dict[str, Any], map_bounds: tuple[int, int, int, int]) -> Any:
     from dungeongen.graphics.rotation import Rotation
     from dungeongen.map.props import Altar, Coffin, Column, ColumnType, Dias, Fountain, Rock
@@ -772,6 +777,14 @@ def _make_persisted_prop(item: dict[str, Any], map_bounds: tuple[int, int, int, 
         "rock_medium": 0.135,
         "rock_large": 0.21,
     }[object_type])) * CELL_SIZE
+    raw_shape = item.get("shape")
+    if isinstance(raw_shape, list) and len(raw_shape) == 8:
+        rock = Rock((x, y), radius)
+        rock._control_points = [
+            (float(point[0]) * CELL_SIZE, float(point[1]) * CELL_SIZE)
+            for point in raw_shape
+        ]
+        return rock
     random_state = random.getstate()
     random.seed(int(hashlib.sha256(item["id"].encode("utf-8")).hexdigest()[:8], 16))
     try:
@@ -832,6 +845,7 @@ def _apply_persisted_objects(dungeon_map: Any, project: dict[str, Any]) -> None:
         orientation = DoorOrientation.HORIZONTAL if direction in ("east", "west") else DoorOrientation.VERTICAL
         door_type = MapDoorType.OPEN if item.get("type") in ("open", "secret") else MapDoorType.CLOSED
         door = Door.from_grid(int(item["x"]) - map_bounds[0], int(item["y"]) - map_bounds[1], orientation, door_type)
+        door._connects_corridor_walls = True
         dungeon_map.add_element(door)
         container = container_at(int(item["x"]), int(item["y"]))
         if container is not None:

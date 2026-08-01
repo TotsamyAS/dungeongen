@@ -34,7 +34,7 @@ LOCALE_PATTERN = re.compile(r"^[a-z]{2}(?:-[A-Z]{2})?$")
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 DEFAULT_COLOR_APPLY_DELAY_MS = 350
 DEFAULT_CANONICAL_RENDER_DELAY_MS = 10_000
-DEFAULT_PREVIEW_SIZE_PIXELS = 96
+DEFAULT_PREVIEW_SIZE_PIXELS = 48
 DEFAULT_WORKING_COPY_IDLE_SAVE_MS = 15_000
 DEFAULT_WORKING_COPY_INTERVAL_MS = 300_000
 
@@ -87,7 +87,7 @@ def _public_editor_config() -> dict[str, int | bool]:
     return {
         "colorApplyDelayMs": max(0, min(5000, int(raw_delay))),
         "canonicalRenderDelayMs": max(0, min(60_000, int(raw_render_delay))),
-        "previewSizePixels": max(48, min(256, int(raw_preview_size))),
+        "previewSizePixels": max(32, min(256, int(raw_preview_size))),
         "workingCopyIdleSaveMs": max(1000, min(300_000, int(raw_idle_save))),
         "workingCopyIntervalMs": max(10_000, min(1_800_000, int(raw_interval_save))),
         "editTimeLogging": _logging_enabled(value, "EDIT_TIME_LOGGING"),
@@ -173,6 +173,11 @@ def editor_js() -> Response:
 @app.get("/dungeon-editor/encoder-worker.js")
 def encoder_worker_js() -> Response:
     return _editor_response("encoder-worker.js", "application/javascript; charset=utf-8")
+
+
+@app.get("/dungeon-editor/palettes.json")
+def editor_palettes() -> Response:
+    return _editor_response("palettes.json", "application/json; charset=utf-8")
 
 
 @app.get("/dungeon-editor/config.json")

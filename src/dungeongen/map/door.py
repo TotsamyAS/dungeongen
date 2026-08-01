@@ -204,14 +204,14 @@ class Door(MapElement):
             if self._orientation == DoorOrientation.HORIZONTAL:
                 # Door width is 1/6 of cell size
                 door_width = self._width / 6
-                # Door height is 55% of cell height
-                door_height = self._height * 0.55
+                # Manually placed corridor doors span from wall to wall.
+                door_height = self._height if getattr(self, '_connects_corridor_walls', False) else self._height * 0.55
                 # Center the door
                 door_x = self._x + (self._width - door_width) / 2
                 door_y = self._y + (self._height - door_height) / 2
             else:
-                # Door width is 60% of cell width
-                door_width = self._width * 0.6
+                # Manually placed corridor doors span from wall to wall.
+                door_width = self._width if getattr(self, '_connects_corridor_walls', False) else self._width * 0.6
                 # Door height is 1/5 of cell size
                 door_height = self._height / 5
                 # Center the door

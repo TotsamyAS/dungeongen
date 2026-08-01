@@ -69,16 +69,23 @@ def test_places_rotated_coffin_on_floor_and_rejects_outside_floor() -> None:
         )
 
 
-def test_boundary_door_can_be_placed_and_erased() -> None:
+def test_corridor_door_can_be_placed_and_room_door_is_rejected() -> None:
     structure, layout = editable_objects_fixture()
+    structure["floorCells"].extend([[2, -1], [2, 0]])
 
     structure, layout = apply_structure_operation(
         structure,
         layout,
-        {"type": "placeObject", "objectType": "door_open", "cell": [1, 1], "rotation": 0},
+        {"type": "placeObject", "objectType": "door_open", "cell": [2, 0], "rotation": 0},
     )
     door = next(item for item in layout["doors"] if item.get("manual"))
     assert door["direction"] == "north"
+    with pytest.raises(ProjectValidationError, match="invalidPlacement"):
+        apply_structure_operation(
+            structure,
+            layout,
+            {"type": "placeObject", "objectType": "door_open", "cell": [1, 1], "rotation": 0},
+        )
 
     structure, layout = apply_structure_operation(
         structure,

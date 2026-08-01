@@ -7,7 +7,7 @@
 	"canonicalRenderDelayMs": 10,
 	"workingCopyIdleSaveMs": 15000,
 	"workingCopyIntervalMs": 300000,
-	"previewSizePixels": 96,
+	"previewSizePixels": 48,
 	"logging": {
 		"EDITING_LOGGING": false,
 		"EDIT_TIME_LOGGING": true

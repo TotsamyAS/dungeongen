@@ -1,8 +1,8 @@
 const fallbackLocale = 'ru';
-const editorAssetVersion = '20260801-8';
+const editorAssetVersion = '20260801-11';
 const defaultColorApplyDelayMs = 350;
 const defaultCanonicalRenderDelayMs = 10000;
-const defaultPreviewSizePixels = 96;
+const defaultPreviewSizePixels = 48;
 const defaultWorkingCopyIdleSaveMs = 15000;
 const defaultWorkingCopyIntervalMs = 300000;
 const cellSize = 64;
@@ -87,8 +87,20 @@ let fastMode = false;
 let workspaceView = 'preview';
 let objectRotation = 0;
 let hoveredCell = null;
+let colorPresets = [];
+let paletteMenuOpen = false;
+let editPreviewFrame = 0;
+let queuedEditPreview = null;
+let placementObjectId = '';
+const placementIndexCache = { project: null, value: null };
 const encoderRequests = new Map();
 const pendingClassificationCells = new Set();
+const editToolTooltip = document.createElement('div');
+editToolTooltip.className = 'edit-tool-tooltip';
+editToolTooltip.id = 'editToolTooltip';
+editToolTooltip.setAttribute('role', 'tooltip');
+editToolTooltip.hidden = true;
+document.body.append(editToolTooltip);
 try {
 	fastMode = localStorage.getItem(fastModeStorageKey) === 'true';
 	workspaceView = fastMode ? 'structure' : 'preview';
@@ -134,6 +146,10 @@ const elements = {
 	structureTab: document.getElementById('structureTab'),
 	previewTab: document.getElementById('previewTab'),
 	fastMode: document.getElementById('fastMode'),
+	palettePresetButton: document.getElementById('palettePresetButton'),
+	palettePresetName: document.getElementById('palettePresetName'),
+	palettePresetPreview: document.getElementById('palettePresetPreview'),
+	palettePresetMenu: document.getElementById('palettePresetMenu'),
 	fields: {
 		size: document.getElementById('size'),
 		symmetry: document.getElementById('symmetry'),
@@ -165,6 +181,27 @@ function t(key, params = {}) {
 		value = value.replaceAll(`{${name}}`, String(replacement));
 	}
 	return value;
+}
+
+function showEditToolTooltip(button) {
+	const text = button.dataset.tooltip;
+	if (!text) return;
+	editToolTooltip.textContent = text;
+	editToolTooltip.hidden = false;
+	button.setAttribute('aria-describedby', editToolTooltip.id);
+	const buttonBounds = button.getBoundingClientRect();
+	const tooltipBounds = editToolTooltip.getBoundingClientRect();
+	let left = buttonBounds.left + buttonBounds.width / 2 - tooltipBounds.width / 2;
+	let top = buttonBounds.bottom + 8;
+	left = Math.min(Math.max(8, left), window.innerWidth - tooltipBounds.width - 8);
+	if (top + tooltipBounds.height > window.innerHeight - 8) top = buttonBounds.top - tooltipBounds.height - 8;
+	editToolTooltip.style.left = `${Math.round(left)}px`;
+	editToolTooltip.style.top = `${Math.round(Math.max(8, top))}px`;
+}
+
+function hideEditToolTooltip(button = null) {
+	if (button?.getAttribute('aria-describedby') === editToolTooltip.id) button.removeAttribute('aria-describedby');
+	editToolTooltip.hidden = true;
 }
 
 function normalizeTheme(value) {
@@ -205,7 +242,7 @@ async function loadEditorConfig() {
 		const renderDelay = Number(config?.canonicalRenderDelayMs);
 		if (Number.isFinite(renderDelay)) canonicalRenderDelayMs = Math.max(0, Math.min(60000, Math.round(renderDelay)));
 		const previewSize = Number(config?.previewSizePixels);
-		if (Number.isFinite(previewSize)) previewSizePixels = Math.max(48, Math.min(256, Math.round(previewSize)));
+		if (Number.isFinite(previewSize)) previewSizePixels = Math.max(32, Math.min(256, Math.round(previewSize)));
 		editTimeLogging = config?.editTimeLogging === true;
 		const idleSave = Number(config?.workingCopyIdleSaveMs);
 		if (Number.isFinite(idleSave)) workingCopyIdleSaveMs = Math.max(1000, Math.min(300000, Math.round(idleSave)));
@@ -218,6 +255,20 @@ async function loadEditorConfig() {
 		editTimeLogging = false;
 		workingCopyIdleSaveMs = defaultWorkingCopyIdleSaveMs;
 		workingCopyIntervalMs = defaultWorkingCopyIntervalMs;
+	}
+}
+
+async function loadColorPresets() {
+	try {
+		const response = await fetch(`/dungeon-editor/palettes.json?v=${editorAssetVersion}`, { cache: 'no-store' });
+		if (!response.ok) return;
+		const value = await response.json();
+		colorPresets = Array.isArray(value)
+			? value.filter((preset) => preset && typeof preset.id === 'string' && preset.colors)
+				.map((preset) => ({ ...preset, colors: normalizeAppearance(preset.colors) }))
+			: [];
+	} catch {
+		colorPresets = [];
 	}
 }
 
@@ -256,6 +307,12 @@ function applyLabels() {
 		button.setAttribute('aria-label', text);
 		button.dataset.tooltip = text;
 	});
+	document.querySelectorAll('[data-edit-tool]').forEach((button) => {
+		const labelKey = button.querySelector('[data-label]')?.dataset.label;
+		const text = t(labelKey ?? 'objectPlacementTitle');
+		button.setAttribute('aria-label', text);
+		button.dataset.tooltip = text;
+	});
 	setControlLabel(elements.backButton, t('back'));
 	renderThemeToggle();
 	setControlLabel(elements.zoomIn, t('zoomIn'));
@@ -264,6 +321,7 @@ function applyLabels() {
 	setControlLabel(elements.undoEdit, t('undo'));
 	setControlLabel(elements.redoEdit, t('redo'));
 	elements.createProjectForm.querySelector('button').setAttribute('aria-label', t('createProject'));
+	renderColorPresetOptions();
 	renderEditingTool();
 }
 
@@ -278,7 +336,9 @@ function renderEditingTool() {
 	}[activeTool];
 	const objectLabel = document.querySelector(`[data-edit-tool="${activeTool}"] [data-label]`)?.dataset.label;
 	elements.editToolTitle.textContent = content ? t(content[0]) : t(objectLabel ?? 'objectPlacementTitle');
-	elements.editToolHint.textContent = content ? t(content[1]) : t('objectPlacementHint');
+	elements.editToolHint.textContent = content
+		? t(content[1])
+		: t(activeTool.startsWith('door_') ? 'doorPlacementHint' : 'objectPlacementHint');
 	elements.editAreaShortcut.textContent = rotatableTools.has(activeTool) ? t('rotationShortcut') : t('areaShortcut');
 	elements.editAreaShortcut.hidden = !['wall', 'corridor', 'waterBrush'].includes(activeTool) && !rotatableTools.has(activeTool);
 	document.querySelectorAll('[data-edit-tool]').forEach((button) => {
@@ -424,10 +484,72 @@ function styledSvg(template, appearanceValue) {
 function writeAppearance(value) {
 	const appearance = normalizeAppearance(value);
 	for (const [key, input] of Object.entries(elements.colors)) input.value = appearance[key];
+	syncColorPreset(appearance);
 }
 
 function readAppearance() {
 	return Object.fromEntries(Object.entries(elements.colors).map(([key, input]) => [key, input.value]));
+}
+
+const palettePreviewKeys = ['background', 'floor', 'walls', 'hatching', 'water', 'numbers'];
+
+function matchingColorPreset(value) {
+	const appearance = normalizeAppearance(value);
+	return colorPresets.find((preset) => Object.keys(defaultAppearance).every((key) => preset.colors[key] === appearance[key])) ?? null;
+}
+
+function fillPalettePreview(element, colors) {
+	element.replaceChildren();
+	for (const key of palettePreviewKeys) {
+		const swatch = document.createElement('span');
+		swatch.style.backgroundColor = colors[key];
+		element.append(swatch);
+	}
+}
+
+function syncColorPreset(value = readAppearance()) {
+	if (!elements.palettePresetName || !elements.palettePresetPreview) return;
+	const appearance = normalizeAppearance(value);
+	const preset = matchingColorPreset(appearance);
+	elements.palettePresetName.textContent = t(preset?.labelKey ?? 'paletteCustom');
+	fillPalettePreview(elements.palettePresetPreview, preset?.colors ?? appearance);
+	elements.palettePresetMenu?.querySelectorAll('[data-palette-id]').forEach((option) => {
+		option.setAttribute('aria-selected', String(option.dataset.paletteId === preset?.id));
+	});
+}
+
+function closeColorPresetMenu() {
+	paletteMenuOpen = false;
+	elements.palettePresetMenu.hidden = true;
+	elements.palettePresetButton.setAttribute('aria-expanded', 'false');
+}
+
+function renderColorPresetOptions() {
+	if (!elements.palettePresetMenu) return;
+	elements.palettePresetMenu.replaceChildren();
+	for (const preset of colorPresets) {
+		const option = document.createElement('button');
+		option.type = 'button';
+		option.className = 'palette-option';
+		option.dataset.paletteId = preset.id;
+		option.setAttribute('role', 'option');
+		const preview = document.createElement('span');
+		preview.className = 'palette-preview';
+		preview.setAttribute('aria-hidden', 'true');
+		fillPalettePreview(preview, preset.colors);
+		const name = document.createElement('strong');
+		name.textContent = t(preset.labelKey);
+		option.append(preview, name);
+		option.addEventListener('click', () => {
+			if (!currentProject?.structure) return;
+			if (!pendingAppearanceSnapshot) pendingAppearanceSnapshot = cloneProject();
+			writeAppearance(preset.colors);
+			closeColorPresetMenu();
+			void updateAppearance();
+		});
+		elements.palettePresetMenu.append(option);
+	}
+	syncColorPreset(currentProject?.appearance ?? defaultAppearance);
 }
 
 function cloneProject(project = currentProject) {
@@ -530,7 +652,8 @@ async function checkpointWorkingCopy() {
 			pendingHostSaveRevision = clientRevision;
 			localStatus = 'statusSaving';
 			renderAll();
-			await autosaveCurrent(null, false);
+			const needsPreview = !hostState.projects?.find((project) => project.id === projectId)?.previewUrl;
+			await autosaveCurrent(null, needsPreview);
 			return true;
 		} catch {
 			if (currentProjectId === projectId) {
@@ -589,6 +712,7 @@ function renderAll() {
 	elements.exportButton.disabled = !currentProject?.structure || generating || Boolean(hostState.exporting);
 	elements.openGeneration.disabled = !currentProjectId;
 	for (const input of Object.values(elements.colors)) input.disabled = !currentProject?.structure;
+	elements.palettePresetButton.disabled = !currentProject?.structure || !colorPresets.length;
 	document.querySelector('[data-tool-button="editing"]').disabled = !canEditMap();
 	document.querySelectorAll('[data-edit-tool]').forEach((button) => { button.disabled = !canEditMap(); });
 	elements.undoEdit.disabled = !undoStack.length || generating || editing;
@@ -735,7 +859,7 @@ function workspaceDimensions() {
 }
 
 function activeMapElement() {
-	return elements.structureMap.hidden ? elements.mapImage : elements.structureMap;
+	return elements.structureMap.hasAttribute('hidden') ? elements.mapImage : elements.structureMap;
 }
 
 function mapPixel(cell) {
@@ -777,31 +901,145 @@ function objectBounds(cells) {
 	};
 }
 
-function appendLightweightObject(parent, object) {
-	const bounds = objectBounds(object.cells);
-	const group = svgElement('g', {
-		class: `structure-object structure-object-${object.type}`,
-		'data-object-id': object.id ?? ''
+function fnv1a32(value) {
+	let hash = 0x811c9dc5;
+	for (let index = 0; index < value.length; index += 1) {
+		hash ^= value.charCodeAt(index);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	return hash >>> 0;
+}
+
+function xorshiftRandom(state) {
+	let value = state.value || 0x6d2b79f5;
+	value ^= value << 13;
+	value ^= value >>> 17;
+	value ^= value << 5;
+	state.value = value >>> 0;
+	return state.value / 0x100000000;
+}
+
+function defaultRockSize(type) {
+	return { rock_small: .08, rock_medium: .135, rock_large: .21 }[type] ?? .135;
+}
+
+function rockShapePoints(object) {
+	if (Array.isArray(object.shape) && object.shape.length >= 3) {
+		return object.shape.map((point) => [Number(point[0]) * cellSize, Number(point[1]) * cellSize]);
+	}
+	const radius = Number(object.size) || defaultRockSize(object.type);
+	const state = { value: fnv1a32(String(object.id ?? object.type)) };
+	return Array.from({ length: 8 }, (_, index) => {
+		const radiusVariation = (xorshiftRandom(state) * .8) - .4;
+		const angleVariation = (xorshiftRandom(state) * .52) - .26;
+		const angle = index * Math.PI / 4 + angleVariation;
+		const value = radius * cellSize * (1 + radiusVariation);
+		return [value * Math.cos(angle), value * Math.sin(angle)];
 	});
-	const pad = Math.max(7, Math.min(bounds.width, bounds.height) * .16);
+}
+
+function rockPath(points, cx, cy) {
+	if (points.length < 3) return '';
+	const midpoint = (left, right) => [(left[0] + right[0]) / 2, (left[1] + right[1]) / 2];
+	const first = midpoint(points[0], points[1]);
+	let path = `M${cx + first[0]} ${cy + first[1]}`;
+	for (let index = 1; index <= points.length; index += 1) {
+		const current = points[index % points.length];
+		const next = points[(index + 1) % points.length];
+		const end = midpoint(current, next);
+		path += `Q${cx + current[0]} ${cy + current[1]} ${cx + end[0]} ${cy + end[1]}`;
+	}
+	return `${path}Z`;
+}
+
+function polygonPath(points) {
+	return `${points.map((point, index) => `${index ? 'L' : 'M'}${point[0]} ${point[1]}`).join('')}Z`;
+}
+
+function appendLightweightObject(parent, object, extraClass = '') {
+	const bounds = objectBounds(object.cells);
+	const appearance = normalizeAppearance(currentProject?.appearance);
+	const fill = appearance.floor;
+	const outline = appearance.walls;
+	const light = appearance.shadow;
 	const cx = bounds.x + bounds.width / 2;
 	const cy = bounds.y + bounds.height / 2;
+	const rotation = ((Number(object.rotation) || 0) % 4 + 4) % 4;
+	const group = svgElement('g', {
+		class: `structure-object structure-object-${object.type} ${extraClass}`.trim(),
+		transform: `rotate(${rotation * 90} ${cx} ${cy})`,
+		'data-object-id': object.id ?? ''
+	});
+
 	if (object.type.startsWith('column_')) {
-		group.append(svgElement(object.type === 'column_round' ? 'circle' : 'rect', object.type === 'column_round'
-			? { cx, cy, r: cellSize * .24 }
-			: { x: cx - cellSize * .23, y: cy - cellSize * .23, width: cellSize * .46, height: cellSize * .46 }));
+		const shadowAttrs = object.type === 'column_round'
+			? { cx: cx + 6, cy: cy + 8, r: cellSize / 6 + 3, fill: appearance.shadow, stroke: 'none' }
+			: { x: cx - cellSize / 6 + 6 - 3, y: cy - cellSize / 6 + 8 - 3, width: cellSize / 3 + 6, height: cellSize / 3 + 6, fill: appearance.shadow, stroke: 'none' };
+		const shapeAttrs = object.type === 'column_round'
+			? { cx, cy, r: cellSize / 6, fill: light, stroke: outline, 'stroke-width': 6 }
+			: { x: cx - cellSize / 6, y: cy - cellSize / 6, width: cellSize / 3, height: cellSize / 3, fill: light, stroke: outline, 'stroke-width': 6 };
+		group.append(
+			svgElement(object.type === 'column_round' ? 'circle' : 'rect', shadowAttrs),
+			svgElement(object.type === 'column_round' ? 'circle' : 'rect', shapeAttrs)
+		);
 	} else if (object.type.startsWith('rock_')) {
-		const radius = { rock_small: .17, rock_medium: .24, rock_large: .32 }[object.type] * cellSize;
-		group.append(svgElement('path', { d: `M${cx-radius} ${cy+radius*.45}l${radius*.35} -${radius*1.45} ${radius*1.05} -${radius*.25} ${radius*.75} ${radius*.85} -${radius*.45} ${radius*.9}z` }));
+		group.append(svgElement('path', {
+			d: rockPath(rockShapePoints(object), cx, cy), fill, stroke: outline,
+			'stroke-width': 2, 'stroke-linejoin': 'round'
+		}));
 	} else if (object.type === 'fountain') {
-		group.append(svgElement('circle', { cx, cy, r: cellSize * .31 }), svgElement('circle', { cx, cy, r: cellSize * .16 }));
+		const outerRadius = cellSize * .7;
+		group.append(
+			svgElement('circle', { cx, cy, r: outerRadius, fill, stroke: outline, 'stroke-width': 2 }),
+			svgElement('circle', { cx, cy, r: outerRadius * .82, fill: '#e8eef2', stroke: outline, 'stroke-width': 1.5 }),
+			svgElement('circle', { cx, cy, r: outerRadius * .25, fill, stroke: outline, 'stroke-width': 1 })
+		);
 	} else if (object.type === 'dais') {
-		group.append(svgElement('rect', { x: bounds.x + pad, y: bounds.y + pad, width: bounds.width - pad * 2, height: bounds.height - pad * 2, rx: 12 }));
+		const outerRadius = cellSize * 1.5;
+		const innerRadius = outerRadius * .75;
+		const flatY = cy - cellSize;
+		group.append(
+			svgElement('path', {
+				d: `M${cx + outerRadius} ${flatY}A${outerRadius} ${outerRadius} 0 0 1 ${cx - outerRadius} ${flatY}Z`,
+				fill, stroke: outline, 'stroke-width': 2
+			}),
+			svgElement('path', {
+				d: `M${cx + innerRadius} ${flatY}A${innerRadius} ${innerRadius} 0 0 1 ${cx - innerRadius} ${flatY}`,
+				fill: 'none', stroke: outline, 'stroke-width': 2
+			})
+		);
 	} else if (object.type === 'coffin') {
-		group.append(svgElement('path', { d: `M${cx-bounds.width*.2} ${bounds.y+pad}L${cx+bounds.width*.2} ${bounds.y+pad}L${bounds.x+bounds.width-pad} ${cy-bounds.height*.22}V${cy+bounds.height*.22}L${cx+bounds.width*.2} ${bounds.y+bounds.height-pad}H${cx-bounds.width*.2}L${bounds.x+pad} ${cy+bounds.height*.22}V${cy-bounds.height*.22}Z` }));
-	} else {
-		group.append(svgElement('rect', { x: bounds.x + pad, y: bounds.y + pad, width: bounds.width - pad * 2, height: bounds.height - pad * 2, rx: 4 }));
-		if (object.type === 'altar') group.append(svgElement('path', { d: `M${bounds.x+pad} ${cy}H${bounds.x+bounds.width-pad}M${cx} ${bounds.y+pad}V${bounds.y+bounds.height-pad}` }));
+		const x = cx - bounds.width * .35;
+		const y = cy - bounds.height * .45;
+		const width = bounds.width * .7;
+		const height = bounds.height * .9;
+		const insetX = width * .1;
+		const insetY = height * .1;
+		const outer = [
+			[x + width / 2, y], [x + width, y + height / 6], [x + width, y + height * .75],
+			[x + width / 2, y + height], [x, y + height * .75], [x, y + height / 6]
+		];
+		const inner = [
+			[x + width / 2, y + insetY], [x + width - insetX, y + height / 6 + insetY],
+			[x + width - insetX, y + height * .75 - insetY], [x + width / 2, y + height - insetY],
+			[x + insetX, y + height * .75 - insetY], [x + insetX, y + height / 6 + insetY]
+		];
+		group.append(
+			svgElement('path', { d: polygonPath(outer), fill: 'none', stroke: outline, 'stroke-width': 2 }),
+			svgElement('path', { d: polygonPath(inner), fill: 'none', stroke: outline, 'stroke-width': 1 })
+		);
+	} else if (object.type === 'altar') {
+		const x = cx - cellSize * .35;
+		const y = cy - cellSize * .35;
+		const width = cellSize * .3;
+		const height = cellSize * .7;
+		const dotX = x + width / 2;
+		const dotY = y + height / 2;
+		group.append(
+			svgElement('rect', { x, y, width, height, fill, stroke: outline, 'stroke-width': 2 }),
+			svgElement('circle', { cx: dotX, cy: dotY - height * .25, r: cellSize * .04, fill: outline, stroke: 'none' }),
+			svgElement('circle', { cx: dotX, cy: dotY + height * .25, r: cellSize * .04, fill: outline, stroke: 'none' })
+		);
 	}
 	parent.append(group);
 }
@@ -812,23 +1050,75 @@ function layoutObjectType(collection, item) {
 	return item.main || item.type === 'entrance' ? 'entrance' : 'exit';
 }
 
-function appendLightweightLayoutObject(parent, collection, item) {
+function appendLightweightLayoutObject(parent, collection, item, extraClass = '') {
 	const [x, y] = mapPixel([item.x, item.y]);
 	const type = layoutObjectType(collection, item);
-	const rotation = Math.max(0, ['north', 'east', 'south', 'west'].indexOf(item.direction));
+	const directionIndex = Math.max(0, ['north', 'east', 'south', 'west'].indexOf(item.direction));
+	const cx = x + cellSize / 2;
+	const cy = y + cellSize / 2;
 	const group = svgElement('g', {
-		class: `structure-object structure-layout-object structure-object-${type}`,
-		transform: `rotate(${rotation * 90} ${x + cellSize / 2} ${y + cellSize / 2})`,
+		class: `structure-object structure-layout-object structure-object-${type} ${extraClass}`.trim(),
+		transform: `rotate(${directionIndex * 90} ${cx} ${cy})`,
 		'data-object-id': item.id ?? ''
 	});
 	if (collection === 'doors') {
-		group.append(svgElement('path', { d: `M${x+8} ${y+8}H${x+cellSize-8}M${x+12} ${y+8}V${y+cellSize*.56}Q${x+cellSize*.5} ${y+cellSize*.85} ${x+cellSize-12} ${y+cellSize*.56}V${y+8}` }));
+		// Open and secret doors do not draw an overlay in the canonical renderer.
+		if (type === 'door_closed' || type === 'door_locked') {
+			const appearance = normalizeAppearance(currentProject?.appearance);
+			const eastWest = item.direction === 'east' || item.direction === 'west';
+			const thickness = cellSize * (eastWest ? 1 / 6 : 1 / 5);
+			group.append(svgElement('rect', {
+				x: x - 1,
+				y: cy - thickness / 2 - 1,
+				width: cellSize + 2,
+				height: thickness + 2,
+				fill: appearance.floor,
+				stroke: appearance.walls,
+				'stroke-width': 4
+			}));
+		}
 	} else if (collection === 'stairs') {
-		let d = '';
-		for (let index = 0; index < 5; index += 1) d += `M${x+10} ${y+12+index*10}H${x+cellSize-10}`;
-		group.append(svgElement('path', { d }));
+		const stepCount = 6;
+		for (let index = 0; index < stepCount; index += 1) {
+			const progress = index / (stepCount - 1);
+			const widthRatio = 1 - progress * .85;
+			const extension = progress < .5 ? cellSize * .03 * (1 - progress) : 0;
+			const halfWidth = cellSize * widthRatio / 2 + extension;
+			const stepY = y + cellSize * progress;
+			group.append(svgElement('line', {
+				x1: cx - halfWidth,
+				y1: stepY,
+				x2: cx + halfWidth,
+				y2: stepY,
+				stroke: '#000000',
+				'stroke-width': 3,
+				'stroke-linecap': 'butt'
+			}));
+		}
 	} else {
-		group.append(svgElement('path', { d: `M${x+12} ${y+32}H${x+48}m-12-12 12 12-12 12` }));
+		const width = cellSize * .58;
+		const height = cellSize * .42;
+		const left = cx - width / 2;
+		const right = cx + width / 2;
+		const shoulderY = cy - height * .55;
+		const apexY = cy - height;
+		const handleX = width * .28;
+		const handleY = Math.abs(shoulderY - apexY) * .85;
+		const skewAngle = item.direction === 'south' || item.direction === 'west' ? -12 : 12;
+		const arch = svgElement('path', {
+			d: [
+				`M${left} ${cy}`,
+				`L${right} ${cy}`,
+				`L${right} ${shoulderY}`,
+				`C${right} ${shoulderY - handleY} ${cx + handleX} ${apexY} ${cx} ${apexY}`,
+				`C${cx - handleX} ${apexY} ${left} ${shoulderY - handleY} ${left} ${shoulderY}`,
+				'Z'
+			].join(''),
+			fill: '#000000',
+			stroke: 'none',
+			transform: `translate(${cx} ${cy}) skewX(${skewAngle}) translate(${-cx} ${-cy})`
+		});
+		group.append(arch);
 	}
 	parent.append(group);
 }
@@ -890,10 +1180,10 @@ function renderWorkspace() {
 	elements.previewTab.classList.toggle('active', fastMode && workspaceView === 'preview');
 	elements.structureTab.setAttribute('aria-selected', String(structureActive));
 	elements.previewTab.setAttribute('aria-selected', String(fastMode && workspaceView === 'preview'));
-	elements.structureMap.hidden = !structureActive;
+	elements.structureMap.toggleAttribute('hidden', !structureActive);
 	elements.mapImage.hidden = structureActive;
 	elements.mapImageBuffer.hidden = true;
-	elements.structureOverlay.hidden = structureActive;
+	elements.structureOverlay.toggleAttribute('hidden', structureActive);
 	elements.mapSurface.classList.toggle('structure-view', structureActive);
 	if (currentProject?.structure) elements.emptyWorkspace.hidden = true;
 	if (structureActive) renderLightweightMap();
@@ -1099,61 +1389,106 @@ function objectFootprint(tool, cell, rotation = objectRotation) {
 	return cells;
 }
 
-function layoutItemsAt(cell) {
-	const matches = [];
+function placementIndex() {
+	if (placementIndexCache.project === currentProject && placementIndexCache.value) return placementIndexCache.value;
+	const structure = currentProject?.structure;
+	const floor = new Set((structure?.floorCells ?? []).map(cellKey));
+	const occupied = new Set();
+	const propAt = new Map();
+	for (const object of structure?.objects ?? []) {
+		for (const cell of object.cells ?? []) {
+			const key = cellKey(cell);
+			propAt.set(key, { targetKind: 'prop', id: object.id, cells: object.cells });
+			if (!object.type.startsWith('rock_')) occupied.add(key);
+		}
+	}
+	const layoutAt = new Map();
 	for (const [collection, kind] of [['doors', 'door'], ['stairs', 'stairs'], ['exits', 'exit']]) {
 		for (const item of currentProject?.layout?.[collection] ?? []) {
-			if (item?.x === cell[0] && item?.y === cell[1]) matches.push({ targetKind: kind, id: item.id, cells: [cell] });
+			const key = cellKey([item.x, item.y]);
+			const matches = layoutAt.get(key) ?? [];
+			matches.push({ targetKind: kind, id: item.id, cells: [[item.x, item.y]] });
+			layoutAt.set(key, matches);
 		}
 	}
-	return matches;
+	const roomCells = new Set();
+	for (const room of structure?.rooms ?? []) {
+		if (room.suppressed === true) continue;
+		for (const cell of room.cells ?? []) roomCells.add(cellKey(cell));
+	}
+	const value = {
+		floor, occupied, propAt, layoutAt, roomCells,
+		water: new Set((structure?.waterCells ?? []).map(cellKey))
+	};
+	placementIndexCache.project = currentProject;
+	placementIndexCache.value = value;
+	return value;
 }
 
-function eraseTarget(cell) {
-	for (let index = (currentProject?.structure?.objects?.length ?? 0) - 1; index >= 0; index -= 1) {
-		const object = currentProject.structure.objects[index];
-		if (object.cells?.some((value) => cellKey(value) === cellKey(cell))) {
-			return { targetKind: 'prop', id: object.id, cells: object.cells };
-		}
-	}
-	const layoutTarget = layoutItemsAt(cell)[0];
+function layoutItemsAt(cell, index = placementIndex()) {
+	return index.layoutAt.get(cellKey(cell)) ?? [];
+}
+
+function corridorDoorRotations(cell, index = placementIndex()) {
+	const key = cellKey(cell);
+	if (index.roomCells.has(key)) return [];
+	const northSouth = index.floor.has(cellKey([cell[0], cell[1] - 1])) && index.floor.has(cellKey([cell[0], cell[1] + 1]));
+	const eastWest = index.floor.has(cellKey([cell[0] - 1, cell[1]])) && index.floor.has(cellKey([cell[0] + 1, cell[1]]));
+	return [
+		...(northSouth ? [0, 2] : []),
+		...(eastWest ? [1, 3] : [])
+	];
+}
+
+function eraseTarget(cell, index = placementIndex()) {
+	const key = cellKey(cell);
+	const prop = index.propAt.get(key);
+	if (prop) return prop;
+	const layoutTarget = index.layoutAt.get(key)?.[0];
 	if (layoutTarget) return layoutTarget;
-	if (currentProject?.structure?.waterCells?.some((value) => cellKey(value) === cellKey(cell))) {
-		return { targetKind: 'water', cell, cells: [cell] };
-	}
+	if (index.water.has(key)) return { targetKind: 'water', cell, cells: [cell] };
 	return null;
 }
 
 function placementPreview(tool, cell) {
-	if (!cell) return { cells: [], valid: false, target: null };
+	if (!cell) return { cells: [], valid: false, target: null, rotation: objectRotation };
+	const index = placementIndex();
 	if (tool === 'eraser') {
-		const target = eraseTarget(cell);
-		return { cells: target?.cells ?? [cell], valid: Boolean(target), target };
+		const target = eraseTarget(cell, index);
+		return { cells: target?.cells ?? [cell], valid: Boolean(target), target, rotation: objectRotation };
 	}
 	const cells = objectFootprint(tool, cell);
-	const floor = new Set((currentProject?.structure?.floorCells ?? []).map(cellKey));
-	let valid = cells.every((value) => floor.has(cellKey(value)));
+	let valid = cells.every((value) => index.floor.has(cellKey(value)));
 	if (valid && propTools.has(tool) && !tool.startsWith('rock_')) {
-		const occupied = new Set(
-			(currentProject.structure.objects ?? [])
-				.filter((item) => !item.type.startsWith('rock_'))
-				.flatMap((item) => item.cells ?? []).map(cellKey)
-		);
-		valid = cells.every((value) => !occupied.has(cellKey(value)));
+		valid = cells.every((value) => !index.occupied.has(cellKey(value)));
 	}
 	if (valid && layoutTools.has(tool)) {
-		valid = layoutItemsAt(cell).length === 0;
-		if (valid && (tool.startsWith('door_') || tool === 'entrance' || tool === 'exit')) {
+		valid = layoutItemsAt(cell, index).length === 0;
+		if (valid && tool.startsWith('door_')) {
+			const rotations = corridorDoorRotations(cell, index);
+			const rotation = rotations.includes(objectRotation) ? objectRotation : rotations[0] ?? objectRotation;
+			return { cells, valid: rotations.length > 0, target: null, rotation };
+		}
+		if (valid && (tool === 'entrance' || tool === 'exit')) {
 			const facing = [[0, -1], [1, 0], [0, 1], [-1, 0]][objectRotation];
-			valid = !floor.has(cellKey([cell[0] + facing[0], cell[1] + facing[1]]));
+			valid = !index.floor.has(cellKey([cell[0] + facing[0], cell[1] + facing[1]]));
 		}
 	}
-	return { cells, valid, target: null };
+	return { cells, valid, target: null, rotation: objectRotation };
 }
 
 function localId(prefix) {
 	const id = globalThis.crypto?.randomUUID?.().replaceAll('-', '') ?? `${Date.now()}${Math.random()}`.replace('.', '');
 	return `${prefix}-${id.slice(0, 12)}`;
+}
+
+function currentPlacementObjectId() {
+	if (!placementObjectId) placementObjectId = localId('manual');
+	return placementObjectId;
+}
+
+function sameCell(left, right) {
+	return Boolean(left && right && left[0] === right[0] && left[1] === right[1]) || (!left && !right);
 }
 
 function cellSet(cells = []) {
@@ -1352,11 +1687,16 @@ function applyLocalOperation(project, operation) {
 		const cells = objectFootprint(operation.objectType, operation.cell, operation.rotation);
 		if (propTools.has(operation.objectType)) {
 			const centered = ['fountain', 'column_round', 'column_square', 'rock_small', 'rock_medium', 'rock_large'].includes(operation.objectType);
-			structure.objects.push({
-				id: localId('manual'), type: operation.objectType,
+			const descriptor = {
+				id: operation.objectId || localId('manual'), type: operation.objectType,
 				x: operation.cell[0] + (centered ? .5 : 0), y: operation.cell[1] + (centered ? .5 : 0),
 				rotation: operation.rotation, source: 'manual', cells
-			});
+			};
+			if (operation.objectType.startsWith('rock_')) {
+				descriptor.size = Number(operation.size) || defaultRockSize(operation.objectType);
+				descriptor.shape = Array.isArray(operation.shape) ? operation.shape : rockShapePoints(descriptor).map((point) => point.map((value) => value / cellSize));
+			}
+			structure.objects.push(descriptor);
 		} else {
 			const direction = ['north', 'east', 'south', 'west'][operation.rotation];
 			const definition = layoutObjectDefinitions[operation.objectType];
@@ -1446,19 +1786,34 @@ function renderStructureOverlay() {
 	appendStructurePath([...pendingClassificationCells].map(keyCell), 'structure-pending-class', '', '');
 }
 
+function queueEditPreview(cells = [], tool = activeTool, validity = null) {
+	queuedEditPreview = { cells, tool, validity };
+	if (editPreviewFrame) return;
+	editPreviewFrame = requestAnimationFrame(() => {
+		editPreviewFrame = 0;
+		const request = queuedEditPreview;
+		queuedEditPreview = null;
+		if (request) renderEditPreview(request.cells, request.tool, request.validity);
+	});
+}
+
 function renderEditPreview(cells = [], tool = activeTool, validity = null) {
+	if (editPreviewFrame) cancelAnimationFrame(editPreviewFrame);
+	editPreviewFrame = 0;
+	queuedEditPreview = null;
 	elements.editOverlay.replaceChildren();
 	const mapBounds = currentProject?.structure?.mapBounds;
 	if (!mapBounds) return;
 	let previewCells = cells;
 	let previewValidity = validity;
+	let placement = null;
 	if ((propTools.has(tool) || layoutTools.has(tool) || tool === 'eraser') && hoveredCell && !cells.length) {
-		const placement = placementPreview(tool, hoveredCell);
+		placement = placementPreview(tool, hoveredCell);
 		previewCells = placement.cells;
 		previewValidity = placement.valid;
 	}
 	if (tool === 'waterBrush' && previewCells.length && previewValidity == null) {
-		const floor = new Set((currentProject?.structure?.floorCells ?? []).map(cellKey));
+		const floor = placementIndex().floor;
 		previewValidity = previewCells.every((cell) => floor.has(cellKey(cell)));
 	}
 	if (!previewCells.length) return;
@@ -1467,30 +1822,73 @@ function renderEditPreview(cells = [], tool = activeTool, validity = null) {
 	const stateClass = previewValidity == null ? '' : previewValidity ? ' placement-valid' : ' placement-invalid';
 	path.setAttribute('class', `edit-preview-cell ${tool}${stateClass}`);
 	elements.editOverlay.append(path);
+	if (hoveredCell && placement && (propTools.has(tool) || layoutTools.has(tool))) {
+		const objectClass = `edit-preview-object${placement.valid ? '' : ' placement-invalid'}`;
+		if (propTools.has(tool)) {
+			const object = {
+				id: currentPlacementObjectId(), type: tool,
+				cells: objectFootprint(tool, hoveredCell, placement.rotation),
+				rotation: placement.rotation
+			};
+			if (tool.startsWith('rock_')) {
+				object.size = defaultRockSize(tool);
+				object.shape = rockShapePoints(object).map((point) => point.map((value) => value / cellSize));
+			}
+			appendLightweightObject(elements.editOverlay, object, objectClass);
+		} else {
+			const [collection, type] = layoutObjectDefinitions[tool];
+			appendLightweightLayoutObject(elements.editOverlay, collection, {
+				x: hoveredCell[0], y: hoveredCell[1], type,
+				direction: ['north', 'east', 'south', 'west'][placement.rotation],
+				main: tool === 'entrance'
+			}, objectClass);
+		}
+	}
 }
 
 async function makePreviewBase64() {
-	if (!currentProject?.renderSvg || !elements.mapImage.naturalWidth || !elements.mapImage.naturalHeight) return '';
+	if (!currentProject?.structure) return '';
+	let source = elements.mapImage;
+	let temporaryUrl = '';
+	if (!source.naturalWidth || !source.naturalHeight) {
+		if (!elements.structureMap.childElementCount) renderLightweightMap();
+		const lightweight = elements.structureMap.cloneNode(true);
+		const style = svgElement('style');
+		style.textContent = '.structure-object{fill:rgba(216,139,53,.18);stroke:#1c0919;stroke-width:3}.structure-layout-object{fill:none;stroke-width:4}.structure-number{dominant-baseline:central;text-anchor:middle;font:700 30px Georgia,serif;paint-order:stroke;stroke:rgba(255,255,255,.72);stroke-width:4px}';
+		lightweight.prepend(style);
+		temporaryUrl = URL.createObjectURL(new Blob(
+			[new XMLSerializer().serializeToString(lightweight)],
+			{ type: 'image/svg+xml;charset=utf-8' }
+		));
+		source = new Image();
+		source.src = temporaryUrl;
+		await source.decode().catch(() => undefined);
+	}
+	if (!source.naturalWidth || !source.naturalHeight) {
+		if (temporaryUrl) URL.revokeObjectURL(temporaryUrl);
+		return '';
+	}
 	const canvas = document.createElement('canvas');
 	canvas.width = previewSizePixels;
 	canvas.height = previewSizePixels;
 	const context = canvas.getContext('2d');
-	context.fillStyle = '#ffffff';
+	context.fillStyle = normalizeAppearance(currentProject.appearance).background;
 	context.fillRect(0, 0, previewSizePixels, previewSizePixels);
 	const ratio = Math.min(
-		previewSizePixels / elements.mapImage.naturalWidth,
-		previewSizePixels / elements.mapImage.naturalHeight
+		previewSizePixels / source.naturalWidth,
+		previewSizePixels / source.naturalHeight
 	);
-	const width = elements.mapImage.naturalWidth * ratio;
-	const height = elements.mapImage.naturalHeight * ratio;
+	const width = source.naturalWidth * ratio;
+	const height = source.naturalHeight * ratio;
 	context.drawImage(
-		elements.mapImage,
+		source,
 		(previewSizePixels - width) / 2,
 		(previewSizePixels - height) / 2,
 		width,
 		height
 	);
-	const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', .78));
+	const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', .58));
+	if (temporaryUrl) URL.revokeObjectURL(temporaryUrl);
 	if (!blob) return '';
 	return bytesToBase64(new Uint8Array(await blob.arrayBuffer()));
 }
@@ -1600,7 +1998,8 @@ function scheduleCanonicalRender() {
 			scheduleCanonicalRender();
 			return;
 		}
-		void renderCanonicalProject(projectId, revision, clientRevision, sequence, false);
+		const needsPreview = !hostState.projects?.find((project) => project.id === projectId)?.previewUrl;
+		void renderCanonicalProject(projectId, revision, clientRevision, sequence, needsPreview);
 	}, canonicalRenderDelayMs);
 }
 
@@ -1842,6 +2241,7 @@ function applyHostState(next) {
 
 function activateTool(name) {
 	if (name === 'editing' && !canEditMap()) return;
+	if (name !== 'colors' && paletteMenuOpen) closeColorPresetMenu();
 	activePanel = name;
 	editGesture = null;
 	renderEditPreview();
@@ -1857,10 +2257,15 @@ document.querySelectorAll('[data-tool-button]').forEach((button) => {
 	button.addEventListener('click', () => activateTool(button.dataset.toolButton));
 });
 document.querySelectorAll('[data-edit-tool]').forEach((button) => {
+	button.addEventListener('pointerenter', () => showEditToolTooltip(button));
+	button.addEventListener('pointerleave', () => hideEditToolTooltip(button));
+	button.addEventListener('focus', () => showEditToolTooltip(button));
+	button.addEventListener('blur', () => hideEditToolTooltip(button));
 	button.addEventListener('click', () => {
 		if (!canEditMap() || !editingTools.has(button.dataset.editTool)) return;
 		activeTool = button.dataset.editTool;
 		editGesture = null;
+		placementObjectId = '';
 		renderEditPreview();
 		renderEditingTool();
 	});
@@ -1870,6 +2275,7 @@ async function setWorkspaceView(view) {
 	if (!fastMode || !['structure', 'preview'].includes(view)) return;
 	workspaceView = view;
 	hoveredCell = null;
+	placementObjectId = '';
 	renderEditPreview();
 	if (view === 'structure') {
 		cancelCanonicalRender();
@@ -1944,7 +2350,15 @@ elements.openGeneration.addEventListener('click', () => activateTool('generation
 elements.structureTab.addEventListener('click', () => void setWorkspaceView('structure'));
 elements.previewTab.addEventListener('click', () => void setWorkspaceView('preview'));
 elements.fastMode.addEventListener('change', () => setFastMode(elements.fastMode.checked));
-for (const input of Object.values(elements.colors)) input.addEventListener('input', scheduleAppearanceUpdate);
+elements.palettePresetButton.addEventListener('click', () => {
+	paletteMenuOpen = !paletteMenuOpen;
+	elements.palettePresetMenu.hidden = !paletteMenuOpen;
+	elements.palettePresetButton.setAttribute('aria-expanded', String(paletteMenuOpen));
+});
+for (const input of Object.values(elements.colors)) input.addEventListener('input', () => {
+	syncColorPreset(readAppearance());
+	scheduleAppearanceUpdate();
+});
 elements.exportButton.addEventListener('click', async () => {
 	if (!currentProjectId || !currentProject?.structure) return;
 	localStatus = 'statusExporting';
@@ -1984,7 +2398,8 @@ elements.canvas.addEventListener('pointerdown', (event) => {
 		event.preventDefault();
 		editGesture = {
 			tool: activeTool, start: cell, current: cell, last: cell,
-			shift: event.shiftKey, cells: new Set([cellKey(cell)]), pointerId: event.pointerId
+			shift: event.shiftKey, cells: new Set([cellKey(cell)]), pointerId: event.pointerId,
+			objectId: propTools.has(activeTool) ? currentPlacementObjectId() : ''
 		};
 		elements.canvas.setPointerCapture(event.pointerId);
 		hoveredCell = cell;
@@ -2000,27 +2415,34 @@ elements.canvas.addEventListener('pointermove', (event) => {
 	if (editGesture) {
 		const cell = eventCell(event);
 		if (!cell) return;
-		if (editGesture.tool === 'wall' || editGesture.tool === 'corridor' || editGesture.tool === 'waterBrush') {
+		const cellChanged = !sameCell(cell, editGesture.current);
+		const shiftChanged = editGesture.shift !== event.shiftKey;
+		if (!cellChanged && !shiftChanged) return;
+		if (cellChanged && (editGesture.tool === 'wall' || editGesture.tool === 'corridor' || editGesture.tool === 'waterBrush')) {
 			for (const pathCell of lineCells(editGesture.last, cell)) editGesture.cells.add(cellKey(pathCell));
 		}
 		editGesture.last = cell;
 		editGesture.current = cell;
+		editGesture.shift = event.shiftKey;
 		hoveredCell = cell;
-		if (propTools.has(editGesture.tool) || layoutTools.has(editGesture.tool) || editGesture.tool === 'eraser') renderEditPreview();
-		else renderEditPreview(gestureCells(editGesture, cell, event.shiftKey), editGesture.tool);
+		if (propTools.has(editGesture.tool) || layoutTools.has(editGesture.tool) || editGesture.tool === 'eraser') queueEditPreview();
+		else queueEditPreview(gestureCells(editGesture, cell, event.shiftKey), editGesture.tool);
 		return;
 	}
 	if (activePanel === 'editing' && canEditMap()) {
 		const cell = eventCell(event);
-		hoveredCell = cell;
-		if (propTools.has(activeTool) || layoutTools.has(activeTool) || activeTool === 'eraser') renderEditPreview();
-		else renderEditPreview(cell ? (activeTool === 'roundRoom' ? roundPreview(cell, 1) : [cell]) : [], activeTool);
+		if (!sameCell(cell, hoveredCell)) {
+			hoveredCell = cell;
+			if (propTools.has(activeTool) || layoutTools.has(activeTool) || activeTool === 'eraser') queueEditPreview();
+			else queueEditPreview(cell ? (activeTool === 'roundRoom' ? roundPreview(cell, 1) : [cell]) : [], activeTool);
+		}
 	}
 	if (!pointerStart) return;
 	panX = pointerStart.panX + event.clientX - pointerStart.x;
 	panY = pointerStart.panY + event.clientY - pointerStart.y;
 	updateTransform();
 });
+
 elements.canvas.addEventListener('pointerup', (event) => {
 	if (editGesture) {
 		const gesture = editGesture;
@@ -2053,10 +2475,19 @@ elements.canvas.addEventListener('pointerup', (event) => {
 		} else {
 			const placement = placementPreview(gesture.tool, current);
 			renderEditPreview([], gesture.tool);
-			if (placement.valid) void commitStructure({
-				type: 'placeObject', objectType: gesture.tool, cell: current, rotation: objectRotation
-			});
-			else localStatus = 'invalidPlacement';
+			if (placement.valid) {
+				const operation = {
+					type: 'placeObject', objectType: gesture.tool, cell: current, rotation: placement.rotation,
+					objectId: gesture.objectId || currentPlacementObjectId()
+				};
+				if (gesture.tool.startsWith('rock_')) {
+					operation.size = defaultRockSize(gesture.tool);
+					operation.shape = rockShapePoints({ id: operation.objectId, type: gesture.tool, size: operation.size })
+						.map((point) => point.map((value) => value / cellSize));
+				}
+				placementObjectId = '';
+				void commitStructure(operation);
+			} else localStatus = 'invalidPlacement';
 		}
 		renderAll();
 		return;
@@ -2067,6 +2498,7 @@ elements.canvas.addEventListener('pointerup', (event) => {
 elements.canvas.addEventListener('pointercancel', () => {
 	editGesture = null;
 	pointerStart = null;
+	placementObjectId = '';
 	elements.canvas.classList.remove('panning');
 	hoveredCell = null;
 	renderEditPreview();
@@ -2082,6 +2514,12 @@ elements.canvas.addEventListener('contextmenu', (event) => {
 });
 document.addEventListener('keydown', async (event) => {
 	const target = event.target;
+	if (event.code === 'Escape' && paletteMenuOpen) {
+		event.preventDefault();
+		closeColorPresetMenu();
+		elements.palettePresetButton.focus();
+		return;
+	}
 	if (target instanceof HTMLElement && (target.matches('textarea, select, input:not([type="color"])') || target.isContentEditable)) return;
 	if ((event.ctrlKey || event.metaKey) && !event.altKey && event.code === 'KeyS') {
 		event.preventDefault();
@@ -2113,6 +2551,11 @@ document.addEventListener('keydown', async (event) => {
 	if (redo) await redoEdit();
 	else await undoEdit();
 });
+document.addEventListener('pointerdown', (event) => {
+	if (paletteMenuOpen && !elements.palettePresetButton.contains(event.target) && !elements.palettePresetMenu.contains(event.target)) {
+		closeColorPresetMenu();
+	}
+});
 window.addEventListener('resize', () => currentProject?.structure && fitMap());
 window.addEventListener('pagehide', () => {
 	if (!workingCopyDirty) return;
@@ -2128,7 +2571,8 @@ window.addEventListener('message', (event) => {
 	if (event.data.type === 'dungeongen:open') void openProject(event.data);
 });
 
-void Promise.all([loadEditorConfig(), loadLocale(fallbackLocale)]).then(() => {
+void Promise.all([loadEditorConfig(), loadColorPresets(), loadLocale(fallbackLocale)]).then(() => {
+	renderColorPresetOptions();
 	if (periodicCheckpointTimer) clearInterval(periodicCheckpointTimer);
 	periodicCheckpointTimer = setInterval(() => { if (workingCopyDirty) void checkpointWorkingCopy(); }, workingCopyIntervalMs);
 	renderSideFire();

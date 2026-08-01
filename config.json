@@ -4,7 +4,10 @@
 	"threads": 2,
 	"requestTimeoutSeconds": 180,
 	"colorApplyDelayMs": 200,
-	"editPreviewDelayMs": 1000,
+	"canonicalRenderDelayMs": 10,
+	"workingCopyIdleSaveMs": 15000,
+	"workingCopyIntervalMs": 300000,
+	"previewSizePixels": 96,
 	"logging": {
 		"EDITING_LOGGING": false,
 		"EDIT_TIME_LOGGING": true

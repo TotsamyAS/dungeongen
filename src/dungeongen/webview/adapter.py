@@ -19,7 +19,8 @@ def convert_dungeon(layout_dungeon: Dungeon, water_depth: float = 0.0,
                     water_scale: float = 0.016, water_res: float = 0.3,
                     water_stroke: float = 3.0, water_ripple: float = 12.0,
                     show_numbers: bool = True, options: Optional['Options'] = None,
-                    skip_decoration_room_ids: Optional[Set[str]] = None) -> 'Map':
+                    skip_decoration_room_ids: Optional[Set[str]] = None,
+                    decorate_rooms: bool = True) -> 'Map':
     """Convert a dungeonlayout Dungeon to a dungeongen Map.
     
     Args:
@@ -107,7 +108,7 @@ def convert_dungeon(layout_dungeon: Dungeon, water_depth: float = 0.0,
             
             # Decorate room with props (columns, altars, dais, rocks)
             # Same seed + opposite orientation = mirrored decorations
-            if room_id not in skip_decoration_room_ids:
+            if decorate_rooms and room_id not in skip_decoration_room_ids:
                 _decorate_room(room, room_seed, room_orientation)
     
     # Build door lookup by position

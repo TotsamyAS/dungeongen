@@ -22,7 +22,9 @@ from .project import (
     edit_project,
     generate_project,
     parse_project_bytes,
+    checkpoint_project,
     project_bytes,
+    render_edited_project,
     render_project_jpeg,
 )
 
@@ -31,7 +33,10 @@ SERVICE_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config.json"
 LOCALE_PATTERN = re.compile(r"^[a-z]{2}(?:-[A-Z]{2})?$")
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 DEFAULT_COLOR_APPLY_DELAY_MS = 350
-DEFAULT_EDIT_PREVIEW_DELAY_MS = 1000
+DEFAULT_CANONICAL_RENDER_DELAY_MS = 10_000
+DEFAULT_PREVIEW_SIZE_PIXELS = 96
+DEFAULT_WORKING_COPY_IDLE_SAVE_MS = 15_000
+DEFAULT_WORKING_COPY_INTERVAL_MS = 300_000
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_PROJECT_BYTES + 512 * 1024
@@ -67,12 +72,24 @@ def _public_editor_config() -> dict[str, int | bool]:
     raw_delay = value.get("colorApplyDelayMs")
     if isinstance(raw_delay, bool) or not isinstance(raw_delay, (int, float)):
         raw_delay = DEFAULT_COLOR_APPLY_DELAY_MS
-    raw_preview_delay = value.get("editPreviewDelayMs")
-    if isinstance(raw_preview_delay, bool) or not isinstance(raw_preview_delay, (int, float)):
-        raw_preview_delay = DEFAULT_EDIT_PREVIEW_DELAY_MS
+    raw_render_delay = value.get("canonicalRenderDelayMs")
+    if isinstance(raw_render_delay, bool) or not isinstance(raw_render_delay, (int, float)):
+        raw_render_delay = DEFAULT_CANONICAL_RENDER_DELAY_MS
+    raw_preview_size = value.get("previewSizePixels")
+    if isinstance(raw_preview_size, bool) or not isinstance(raw_preview_size, (int, float)):
+        raw_preview_size = DEFAULT_PREVIEW_SIZE_PIXELS
+    raw_idle_save = value.get("workingCopyIdleSaveMs")
+    if isinstance(raw_idle_save, bool) or not isinstance(raw_idle_save, (int, float)):
+        raw_idle_save = DEFAULT_WORKING_COPY_IDLE_SAVE_MS
+    raw_interval_save = value.get("workingCopyIntervalMs")
+    if isinstance(raw_interval_save, bool) or not isinstance(raw_interval_save, (int, float)):
+        raw_interval_save = DEFAULT_WORKING_COPY_INTERVAL_MS
     return {
         "colorApplyDelayMs": max(0, min(5000, int(raw_delay))),
-        "editPreviewDelayMs": max(0, min(10000, int(raw_preview_delay))),
+        "canonicalRenderDelayMs": max(0, min(60_000, int(raw_render_delay))),
+        "previewSizePixels": max(48, min(256, int(raw_preview_size))),
+        "workingCopyIdleSaveMs": max(1000, min(300_000, int(raw_idle_save))),
+        "workingCopyIntervalMs": max(10_000, min(1_800_000, int(raw_interval_save))),
         "editTimeLogging": _logging_enabled(value, "EDIT_TIME_LOGGING"),
     }
 
@@ -153,6 +170,11 @@ def editor_js() -> Response:
     return _editor_response("editor.js", "application/javascript; charset=utf-8")
 
 
+@app.get("/dungeon-editor/encoder-worker.js")
+def encoder_worker_js() -> Response:
+    return _editor_response("encoder-worker.js", "application/javascript; charset=utf-8")
+
+
 @app.get("/dungeon-editor/config.json")
 def editor_config() -> Response:
     response = jsonify(_public_editor_config())
@@ -182,7 +204,8 @@ def generate() -> tuple[Response, int] | Response:
         return _json_error("unauthorized", 401)
     data = request.get_json(silent=True)
     try:
-        project = generate_project(data)
+        defer_render = isinstance(data, dict) and data.get("deferRender") is True
+        project = generate_project(data, render_svg=not defer_render)
     except ProjectValidationError as error:
         return _json_error(str(error), 400)
     except Exception:
@@ -273,6 +296,96 @@ def edit() -> tuple[Response, int] | Response:
         timing("request_handler_total", (time.perf_counter() - request_started_at) * 1000)
         flush_timings()
     return response
+
+
+@app.post("/dungeon-editor/api/render")
+@app.post("/api/dungeongen/editor/render")
+def render_edit() -> tuple[Response, int] | Response:
+    provided_request_id = request.headers.get("X-Dungeongen-Request-Id", "")
+    request_id = provided_request_id if REQUEST_ID_PATTERN.fullmatch(provided_request_id) else secrets.token_hex(4)
+    service_config = _service_config()
+    editing_logging = _logging_enabled(service_config, "EDITING_LOGGING")
+    edit_time_logging = _logging_enabled(service_config, "EDIT_TIME_LOGGING")
+    if (editing_logging or edit_time_logging) and app.logger.getEffectiveLevel() > logging.INFO:
+        app.logger.setLevel(logging.INFO)
+    if not _has_valid_capability():
+        return _json_error("unauthorized", 401)
+
+    request_started_at = time.perf_counter()
+    decode_started_at = time.perf_counter()
+    data = request.get_json(silent=True)
+    decode_elapsed_ms = (time.perf_counter() - decode_started_at) * 1000
+    timing_entries: list[tuple[str, float]] = []
+
+    def record_timing(stage: str, elapsed_ms: float) -> None:
+        timing_entries.append((stage, elapsed_ms))
+
+    def flush_timings() -> None:
+        for stage, elapsed_ms in timing_entries:
+            app.logger.info(
+                "[EDIT-TIME] id=%s operation=render stage=%s elapsed_ms=%.2f",
+                request_id, stage, elapsed_ms,
+            )
+
+    timing = record_timing if edit_time_logging else None
+    if timing is not None:
+        timing("request_decode", decode_elapsed_ms)
+
+    if editing_logging:
+        app.logger.info(
+            "[EDITING] started id=%s path=%s operation=render bytes=%s",
+            request_id, request.path, request.content_length or 0,
+        )
+    try:
+        project = render_edited_project(data, timing=timing, validate_size=False)
+        encoded_project = project_bytes(project, timing=timing, normalize=False)
+    except ProjectValidationError as error:
+        if editing_logging:
+            app.logger.info(
+                "[EDITING] rejected id=%s operation=render error=%s elapsed_ms=%d",
+                request_id, str(error), int((time.perf_counter() - request_started_at) * 1000),
+            )
+        if timing is not None:
+            timing("request_handler_total", (time.perf_counter() - request_started_at) * 1000)
+            flush_timings()
+        return _json_error(str(error), 400)
+    except Exception:
+        app.logger.exception("[EDITING] failed id=%s operation=render", request_id)
+        if timing is not None:
+            timing("request_handler_total", (time.perf_counter() - request_started_at) * 1000)
+            flush_timings()
+        return _json_error("editFailed", 500)
+
+    response = Response(
+        b'{"success":true,"project":' + encoded_project + b"}",
+        mimetype="application/json",
+    )
+    total_ms = (time.perf_counter() - request_started_at) * 1000
+    if timing is not None:
+        timing("request_handler_total", total_ms)
+        flush_timings()
+    if editing_logging:
+        app.logger.info("[EDITING] completed id=%s operation=render elapsed_ms=%d", request_id, int(total_ms))
+    return response
+
+
+@app.post("/dungeon-editor/api/checkpoint")
+@app.post("/api/dungeongen/editor/checkpoint")
+def checkpoint_edit() -> tuple[Response, int] | Response:
+    if not _has_valid_capability():
+        return _json_error("unauthorized", 401)
+    try:
+        project = checkpoint_project(request.get_json(silent=True), validate_size=False)
+        encoded_project = project_bytes(project, normalize=False)
+    except ProjectValidationError as error:
+        return _json_error(str(error), 400)
+    except Exception:
+        app.logger.exception("[EDITING] checkpoint failed")
+        return _json_error("editFailed", 500)
+    return Response(
+        b'{"success":true,"project":' + encoded_project + b"}",
+        mimetype="application/json",
+    )
 
 
 @app.post("/api/dungeongen/projects/default")

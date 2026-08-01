@@ -71,6 +71,7 @@ class Map:
         self._water_depth: float = WaterDepth.DRY  # Water depth level (0 = disabled)
         self._region_include_shapes: List[Shape] = []
         self._region_exclude_shapes: List[Shape] = []
+        self._manual_water_shape: Optional[ShapeGroup] = None
     
     @staticmethod
     def get_invalid_map() -> 'Map':
@@ -129,6 +130,15 @@ class Map:
         """Apply structural floor additions/removals to the final connected region shape."""
         self._region_include_shapes = list(includes)
         self._region_exclude_shapes = list(excludes)
+
+    def set_manual_water_cells(self, cells: Sequence[Tuple[int, int]]) -> None:
+        """Replace procedural water with editable grid-cell water."""
+        self._water_depth = WaterDepth.DRY
+        self._water_layer = None
+        self._manual_water_shape = ShapeGroup.combine([
+            Rectangle(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE, CELL_SIZE * 0.08)
+            for x, y in cells
+        ]) if cells else None
     
     @property
     def water_layer(self) -> Optional[WaterLayer]:
@@ -583,7 +593,21 @@ class Map:
 
             # 5.5. Draw water if enabled (clipped by region shape)
             layer_started_at = time.perf_counter()
-            if self.water_layer and self.water_layer.shapes:
+            if self._manual_water_shape is not None:
+                water_fill = skia.Paint(
+                    AntiAlias=True,
+                    Style=skia.Paint.kFill_Style,
+                    Color=self.options.water_fill_color,
+                )
+                water_stroke = skia.Paint(
+                    AntiAlias=True,
+                    Style=skia.Paint.kStroke_Style,
+                    StrokeWidth=getattr(self, '_water_stroke_width', 3.0),
+                    Color=self.options.water_stroke_color,
+                )
+                self._manual_water_shape.draw(canvas, water_fill)
+                self._manual_water_shape.draw(canvas, water_stroke)
+            elif self.water_layer and self.water_layer.shapes:
                 # Translate water to map coordinates (water is generated at 0,0)
                 canvas.save()
                 canvas.translate(self.bounds.x, self.bounds.y)

@@ -14,8 +14,25 @@ STRUCTURE_VERSION = 1
 EDIT_MARGIN_CELLS = 2
 MAX_EDIT_DIMENSION = 64
 MAX_ROOMS = 512
+MAX_DUNGEON_OBJECTS = 2048
+MAX_STRUCTURE_REVISION = 2**31 - 1
 ROOM_MIN_SPAN = 4
 ROOM_KINDS = frozenset(("generated", "round", "auto", "merged"))
+PROP_OBJECT_TYPES = frozenset((
+    "coffin", "dais", "altar", "fountain", "column_round", "column_square",
+    "rock_small", "rock_medium", "rock_large",
+))
+LAYOUT_OBJECT_TYPES = {
+    "door_open": ("doors", "open"),
+    "door_closed": ("doors", "closed"),
+    "door_locked": ("doors", "locked"),
+    "door_secret": ("doors", "secret"),
+    "stairs_up": ("stairs", "up"),
+    "stairs_down": ("stairs", "down"),
+    "entrance": ("exits", "entrance"),
+    "exit": ("exits", "exit"),
+}
+ROTATION_DIRECTIONS = ("north", "east", "south", "west")
 
 
 def _cell_list(cells: Iterable[Cell]) -> list[list[int]]:
@@ -147,11 +164,17 @@ def initialize_structure(layout: dict[str, Any]) -> dict[str, Any]:
         rooms.append(descriptor)
     return {
         "version": STRUCTURE_VERSION,
+        "revision": 0,
+        "renderedRevision": 0,
         "bounds": bounds,
         "mapBounds": map_bounds,
         "floorCells": _cell_list(floor),
+        "renderedFloorCells": _cell_list(floor),
         "rooms": rooms,
         "roundAreas": [],
+        "objectsInitialized": False,
+        "objects": [],
+        "waterCells": [],
         "clearedDecorationRoomIds": [],
         "nextRoomNumber": _next_free_number(used_numbers),
     }
@@ -199,6 +222,79 @@ def normalize_structure(value: Any, layout: Any) -> dict[str, Any] | None:
             raise ProjectValidationError("invalidProject")
     floor = {_read_cell(cell, bounds) for cell in value.get("floorCells", [])}
     if len(floor) > MAX_EDIT_DIMENSION**2:
+        raise ProjectValidationError("invalidProject")
+    revision = value.get("revision", 0)
+    rendered_revision = value.get("renderedRevision", revision)
+    if (
+        isinstance(revision, bool)
+        or not isinstance(revision, int)
+        or revision < 0
+        or revision > MAX_STRUCTURE_REVISION
+        or isinstance(rendered_revision, bool)
+        or not isinstance(rendered_revision, int)
+        or rendered_revision < 0
+        or rendered_revision > revision
+    ):
+        raise ProjectValidationError("invalidProject")
+    raw_rendered_floor = value.get("renderedFloorCells", value.get("floorCells", []))
+    if not isinstance(raw_rendered_floor, list):
+        raise ProjectValidationError("invalidProject")
+    rendered_floor = {_read_cell(cell, bounds) for cell in raw_rendered_floor}
+    if len(rendered_floor) > MAX_EDIT_DIMENSION**2:
+        raise ProjectValidationError("invalidProject")
+    objects_initialized = value.get("objectsInitialized", False)
+    if not isinstance(objects_initialized, bool):
+        raise ProjectValidationError("invalidProject")
+    raw_objects = value.get("objects", [])
+    if not isinstance(raw_objects, list) or len(raw_objects) > MAX_DUNGEON_OBJECTS:
+        raise ProjectValidationError("invalidProject")
+    objects: list[dict[str, Any]] = []
+    object_ids: set[str] = set()
+    for raw in raw_objects:
+        if not isinstance(raw, dict) or raw.get("type") not in PROP_OBJECT_TYPES:
+            raise ProjectValidationError("invalidProject")
+        object_id = raw.get("id")
+        if not isinstance(object_id, str) or not object_id or len(object_id) > 64 or object_id in object_ids:
+            raise ProjectValidationError("invalidProject")
+        object_ids.add(object_id)
+        x, y = raw.get("x"), raw.get("y")
+        rotation = raw.get("rotation", 0)
+        if (
+            isinstance(x, bool) or not isinstance(x, (int, float))
+            or isinstance(y, bool) or not isinstance(y, (int, float))
+            or not bounds[0] - 1 <= x <= bounds[2] + 1
+            or not bounds[1] - 1 <= y <= bounds[3] + 1
+            or isinstance(rotation, bool) or not isinstance(rotation, int) or rotation not in range(4)
+        ):
+            raise ProjectValidationError("invalidProject")
+        raw_cells = raw.get("cells", [])
+        if not isinstance(raw_cells, list):
+            raise ProjectValidationError("invalidProject")
+        object_cells = {_read_cell(cell, bounds) for cell in raw_cells}
+        if not object_cells or len(object_cells) > 16:
+            raise ProjectValidationError("invalidProject")
+        size = raw.get("size")
+        if size is not None and (
+            isinstance(size, bool) or not isinstance(size, (int, float)) or size <= 0 or size > 2
+        ):
+            raise ProjectValidationError("invalidProject")
+        descriptor = {
+            "id": object_id,
+            "type": raw["type"],
+            "x": round(float(x), 4),
+            "y": round(float(y), 4),
+            "rotation": rotation,
+            "source": "generated" if raw.get("source") == "generated" else "manual",
+            "cells": _cell_list(object_cells),
+        }
+        if size is not None:
+            descriptor["size"] = round(float(size), 4)
+        objects.append(descriptor)
+    raw_water_cells = value.get("waterCells", [])
+    if not isinstance(raw_water_cells, list):
+        raise ProjectValidationError("invalidProject")
+    water_cells = {_read_cell(cell, bounds) for cell in raw_water_cells}
+    if len(water_cells) > MAX_EDIT_DIMENSION**2:
         raise ProjectValidationError("invalidProject")
     rooms: list[dict[str, Any]] = []
     raw_rooms = value.get("rooms", [])
@@ -252,11 +348,17 @@ def normalize_structure(value: Any, layout: Any) -> dict[str, Any] | None:
         raise ProjectValidationError("invalidProject")
     return {
         "version": STRUCTURE_VERSION,
+        "revision": revision,
+        "renderedRevision": rendered_revision,
         "bounds": list(bounds),
         "mapBounds": list(map_bounds),
         "floorCells": _cell_list(floor),
+        "renderedFloorCells": _cell_list(rendered_floor),
         "rooms": rooms,
         "roundAreas": round_areas,
+        "objectsInitialized": objects_initialized,
+        "objects": objects,
+        "waterCells": _cell_list(water_cells & floor),
         "clearedDecorationRoomIds": sorted(set(cleared_ids)),
         "nextRoomNumber": _next_free_number(used),
     }
@@ -394,6 +496,119 @@ def _reclassify(structure: dict[str, Any]) -> None:
     structure["nextRoomNumber"] = _next_free_number({room["number"] for room in structure["rooms"] if room["number"] > 0})
 
 
+def _object_footprint(object_type: str, cell: Cell, rotation: int) -> set[Cell]:
+    width, height = {
+        "dais": (3, 2),
+        "coffin": (1, 2),
+    }.get(object_type, (1, 1))
+    if rotation % 2:
+        width, height = height, width
+    return {
+        (x, y)
+        for y in range(cell[1], cell[1] + height)
+        for x in range(cell[0], cell[0] + width)
+    }
+
+
+def _occupied_object_cells(structure: dict[str, Any]) -> set[Cell]:
+    occupied: set[Cell] = set()
+    for item in structure.get("objects", []):
+        if item.get("type") not in ("rock_small", "rock_medium", "rock_large"):
+            occupied.update((cell[0], cell[1]) for cell in item.get("cells", []))
+    return occupied
+
+
+def _place_dungeon_object(
+    structure: dict[str, Any], layout: dict[str, Any], operation: dict[str, Any], bounds: tuple[int, int, int, int]
+) -> set[Cell]:
+    object_type = operation.get("objectType")
+    if object_type not in PROP_OBJECT_TYPES and object_type not in LAYOUT_OBJECT_TYPES:
+        raise ProjectValidationError("invalidEdit")
+    cell = _read_cell(operation.get("cell"), bounds)
+    rotation = operation.get("rotation", 0)
+    if isinstance(rotation, bool) or not isinstance(rotation, int) or rotation not in range(4):
+        raise ProjectValidationError("invalidEdit")
+    floor = {(value[0], value[1]) for value in structure["floorCells"]}
+    footprint = _object_footprint(object_type, cell, rotation)
+    if not footprint <= floor:
+        raise ProjectValidationError("invalidPlacement")
+    if object_type in PROP_OBJECT_TYPES:
+        if len(structure["objects"]) >= MAX_DUNGEON_OBJECTS:
+            raise ProjectValidationError("invalidPlacement")
+        if object_type not in ("rock_small", "rock_medium", "rock_large") and footprint & _occupied_object_cells(structure):
+            raise ProjectValidationError("invalidPlacement")
+        centered = object_type in (
+            "fountain", "column_round", "column_square", "rock_small", "rock_medium", "rock_large"
+        )
+        descriptor = {
+            "id": uuid.uuid4().hex[:12],
+            "type": object_type,
+            "x": cell[0] + 0.5 if centered else cell[0],
+            "y": cell[1] + 0.5 if centered else cell[1],
+            "rotation": rotation,
+            "source": "manual",
+            "cells": _cell_list(footprint),
+        }
+        structure["objects"].append(descriptor)
+        return footprint
+
+    collection, variant = LAYOUT_OBJECT_TYPES[object_type]
+    if any(
+        (item.get("x"), item.get("y")) == cell
+        for name in ("doors", "stairs", "exits")
+        for item in layout.get(name, [])
+        if isinstance(item, dict)
+    ):
+        raise ProjectValidationError("invalidPlacement")
+    direction = ROTATION_DIRECTIONS[rotation]
+    facing = ((0, -1), (1, 0), (0, 1), (-1, 0))[rotation]
+    if collection in ("doors", "exits") and (cell[0] + facing[0], cell[1] + facing[1]) in floor:
+        raise ProjectValidationError("invalidPlacement")
+    item = {
+        "id": uuid.uuid4().hex[:12], "x": cell[0], "y": cell[1], "direction": direction,
+        "type": variant, "manual": True,
+    }
+    if collection == "doors":
+        item.update({"roomId": "", "passageId": ""})
+    elif collection == "stairs":
+        item["passageId"] = ""
+    else:
+        item.update({"roomId": "", "main": object_type == "entrance"})
+    layout.setdefault(collection, []).append(item)
+    return {cell}
+
+
+def _erase_dungeon_object(
+    structure: dict[str, Any], layout: dict[str, Any], operation: dict[str, Any], bounds: tuple[int, int, int, int]
+) -> set[Cell]:
+    target_kind = operation.get("targetKind")
+    if target_kind == "water":
+        cell = _read_cell(operation.get("cell"), bounds)
+        water = {(value[0], value[1]) for value in structure["waterCells"]}
+        if cell not in water:
+            raise ProjectValidationError("objectNotFound")
+        water.remove(cell)
+        structure["waterCells"] = _cell_list(water)
+        return {cell}
+    target_id = operation.get("id")
+    if not isinstance(target_id, str) or not target_id or len(target_id) > 64:
+        raise ProjectValidationError("invalidEdit")
+    if target_kind == "prop":
+        matches = [item for item in structure["objects"] if item["id"] == target_id]
+        if not matches:
+            raise ProjectValidationError("objectNotFound")
+        structure["objects"] = [item for item in structure["objects"] if item["id"] != target_id]
+        return {(cell[0], cell[1]) for cell in matches[0]["cells"]}
+    collection = {"door": "doors", "stairs": "stairs", "exit": "exits"}.get(target_kind)
+    if not collection:
+        raise ProjectValidationError("invalidEdit")
+    matches = [item for item in layout.get(collection, []) if item.get("id") == target_id]
+    if not matches:
+        raise ProjectValidationError("objectNotFound")
+    layout[collection] = [item for item in layout.get(collection, []) if item.get("id") != target_id]
+    return {(int(matches[0]["x"]), int(matches[0]["y"]))}
+
+
 def apply_structure_operation(structure: dict[str, Any], layout: dict[str, Any], operation: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     if not isinstance(operation, dict):
         raise ProjectValidationError("invalidEdit")
@@ -403,6 +618,8 @@ def apply_structure_operation(structure: dict[str, Any], layout: dict[str, Any],
     affected: set[Cell] = set()
     if operation_type == "initialize":
         return structure, layout
+    if structure["revision"] >= MAX_STRUCTURE_REVISION:
+        raise ProjectValidationError("invalidEdit")
     if operation_type == "paint":
         mode = operation.get("mode")
         if mode not in ("wall", "corridor") or not isinstance(operation.get("cells"), list):
@@ -412,6 +629,13 @@ def apply_structure_operation(structure: dict[str, Any], layout: dict[str, Any],
             raise ProjectValidationError("invalidEdit")
         if mode == "wall":
             floor.difference_update(affected)
+            structure["objects"] = [
+                item for item in structure.get("objects", [])
+                if not ({(cell[0], cell[1]) for cell in item.get("cells", [])} & affected)
+            ]
+            structure["waterCells"] = _cell_list(
+                {(cell[0], cell[1]) for cell in structure.get("waterCells", [])} - affected
+            )
             structure["roundAreas"] = [
                 area for area in structure["roundAreas"]
                 if _room_geometry_cells(
@@ -456,6 +680,26 @@ def apply_structure_operation(structure: dict[str, Any], layout: dict[str, Any],
             raise ProjectValidationError("roomNotFound")
         room = min(candidates, key=lambda item: len(_room_cells(item)))
         room["suppressed"] = not room["suppressed"]
+    elif operation_type == "placeObject":
+        if not structure.get("objectsInitialized"):
+            raise ProjectValidationError("objectsNotInitialized")
+        _place_dungeon_object(structure, layout, operation, bounds)
+    elif operation_type == "eraseObject":
+        if not structure.get("objectsInitialized"):
+            raise ProjectValidationError("objectsNotInitialized")
+        _erase_dungeon_object(structure, layout, operation, bounds)
+    elif operation_type == "paintWater":
+        if not structure.get("objectsInitialized") or not isinstance(operation.get("cells"), list):
+            raise ProjectValidationError("invalidEdit")
+        water_cells = {_read_cell(cell, bounds) for cell in operation["cells"]}
+        if not water_cells:
+            raise ProjectValidationError("invalidEdit")
+        floor_cells = {(cell[0], cell[1]) for cell in structure["floorCells"]}
+        if not water_cells <= floor_cells:
+            raise ProjectValidationError("invalidPlacement")
+        water = {(cell[0], cell[1]) for cell in structure["waterCells"]}
+        water.update(water_cells)
+        structure["waterCells"] = _cell_list(water)
     else:
         raise ProjectValidationError("invalidEdit")
 
@@ -470,4 +714,5 @@ def apply_structure_operation(structure: dict[str, Any], layout: dict[str, Any],
                 room["decorationCleared"] = True
     structure["floorCells"] = _cell_list(floor)
     _reclassify(structure)
+    structure["revision"] += 1
     return structure, layout

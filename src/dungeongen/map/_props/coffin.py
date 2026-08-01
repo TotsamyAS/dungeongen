@@ -3,6 +3,8 @@
 import skia
 from typing import TYPE_CHECKING
 from dungeongen.graphics.shapes import Rectangle
+from dungeongen.graphics.aliases import Point
+from dungeongen.constants import CELL_SIZE
 from dungeongen.map._props.prop import Prop, PropType #type: ignore
 from dungeongen.graphics.rotation import Rotation
 from dungeongen.graphics.conversions import grid_to_map
@@ -11,10 +13,18 @@ from dungeongen.map.enums import Layers
 if TYPE_CHECKING:
     from dungeongen.map.map import Map
 
-COFFIN_PROP_TYPE = PropType(is_decoration=True)
+COFFIN_PROP_TYPE = PropType(
+    is_decoration=True,
+    is_grid_aligned=True,
+    grid_size=(1, 2),
+    boundary_shape=Rectangle(-CELL_SIZE * 0.35, -CELL_SIZE * 0.9, CELL_SIZE * 0.7, CELL_SIZE * 1.8),
+)
 
 class Coffin(Prop):
     """A coffin-shaped prop with nested polygons."""
+
+    def __init__(self, position: Point, rotation: Rotation = Rotation.ROT_0) -> None:
+        super().__init__(COFFIN_PROP_TYPE, position, rotation=rotation)
     
     def _draw_content(self, canvas: skia.Canvas, bounds: Rectangle, layer: Layers) -> None:
         """Draw the coffin shape."""
@@ -23,8 +33,8 @@ class Coffin(Prop):
 
         """Draw the coffin shape."""
         # Calculate points for outer coffin shape
-        x, y = self._bounds.x, self._bounds.y
-        w, h = self._bounds.width, self._bounds.height
+        x, y = bounds.x + bounds.width * 0.15, bounds.y + bounds.height * 0.05
+        w, h = bounds.width * 0.7, bounds.height * 0.9
         
         # Create outer coffin path
         outer_path = skia.Path()
@@ -41,7 +51,7 @@ class Coffin(Prop):
             AntiAlias=True,
             Style=skia.Paint.kStroke_Style,
             StrokeWidth=2.0,
-            Color=0xFF000000  # Black
+            Color=self._map.options.prop_outline_color
         )
         canvas.drawPath(outer_path, outer_paint)
         
@@ -64,9 +74,6 @@ class Coffin(Prop):
             AntiAlias=True,
             Style=skia.Paint.kStroke_Style,
             StrokeWidth=1.0,
-            Color=0xFF000000  # Black
+            Color=self._map.options.prop_outline_color
         )
         canvas.drawPath(inner_path, inner_paint)
-        
-        # Restore canvas state after rotation
-        canvas.restore()

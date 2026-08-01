@@ -4,7 +4,7 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title></title>
-		<link rel="stylesheet" href="/dungeon-editor/editor.css?v=20260801-3" />
+		<link rel="stylesheet" href="/dungeon-editor/editor.css?v=20260801-8" />
 	</head>
 	<body>
 		<svg class="icon-symbols" aria-hidden="true">
@@ -29,12 +29,25 @@
 			<symbol id="icon-room-class" viewBox="0 0 24 24"><path d="M3 3h18v18H3zM9 3v18M15 3v18M3 9h18M3 15h18"/><path d="m8 12 2.5 2.5L16 9"/></symbol>
 			<symbol id="icon-undo" viewBox="0 0 24 24"><path d="M9 7 4 12l5 5"/><path d="M4 12h9a7 7 0 0 1 7 7"/></symbol>
 			<symbol id="icon-redo" viewBox="0 0 24 24"><path d="m15 7 5 5-5 5"/><path d="M20 12h-9a7 7 0 0 0-7 7"/></symbol>
+			<symbol id="icon-settings" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+			<symbol id="icon-coffin" viewBox="0 0 24 24"><path d="m9 2-3 4v12l3 4h6l3-4V6l-3-4Z"/><path d="M12 6v12M9 10h6"/></symbol>
+			<symbol id="icon-altar" viewBox="0 0 24 24"><path d="M5 7h14v5H5zM7 12v8M17 12v8M4 20h16"/><circle cx="9" cy="9.5" r=".5" fill="currentColor"/><circle cx="15" cy="9.5" r=".5" fill="currentColor"/></symbol>
+			<symbol id="icon-dais" viewBox="0 0 24 24"><path d="M3 19a9 9 0 0 1 18 0M6 19a6 6 0 0 1 12 0M3 19h18"/></symbol>
+			<symbol id="icon-fountain" viewBox="0 0 24 24"><circle cx="12" cy="14" r="7"/><circle cx="12" cy="14" r="4"/><path d="M12 3v7M9 6h6"/></symbol>
+			<symbol id="icon-column" viewBox="0 0 24 24"><path d="M6 3h12M7 6h10M8 6v12M16 6v12M7 18h10M6 21h12"/></symbol>
+			<symbol id="icon-rock" viewBox="0 0 24 24"><path d="m4 18 2-9 5-5 7 3 2 10-4 4H8Z"/></symbol>
+			<symbol id="icon-stairs" viewBox="0 0 24 24"><path d="M3 20h5v-4h4v-4h4V8h5"/></symbol>
+			<symbol id="icon-door" viewBox="0 0 24 24"><path d="M5 21h14M7 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16"/><circle cx="14" cy="12" r=".5" fill="currentColor"/></symbol>
+			<symbol id="icon-exit" viewBox="0 0 24 24"><path d="M10 17l5-5-5-5M15 12H3M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"/></symbol>
+			<symbol id="icon-water" viewBox="0 0 24 24"><path d="M12 2 5.5 12a7 7 0 1 0 13 0Z"/></symbol>
+			<symbol id="icon-eraser" viewBox="0 0 24 24"><path d="m7 21-4-4a2 2 0 0 1 0-3L13 4a2 2 0 0 1 3 0l4 4a2 2 0 0 1 0 3L10 21Z"/><path d="m5 12 7 7M7 21h13"/></symbol>
 		</svg>
 
 		<div class="editor-shell">
 			<main class="editor-stage">
+				<div id="workspaceTabs" class="workspace-tabs" role="tablist" hidden><button id="structureTab" class="workspace-tab active" role="tab" type="button" data-label="structureTab"></button><button id="previewTab" class="workspace-tab" role="tab" type="button" data-label="previewTab"></button></div>
 				<div id="canvas" class="editor-canvas" tabindex="0">
-					<div id="mapSurface" class="map-surface"><img id="mapImage" class="map-image" alt="" /><svg id="editOverlay" class="map-edit-overlay" aria-hidden="true"></svg></div>
+					<div id="mapSurface" class="map-surface"><svg id="structureMap" class="map-structure-canvas" aria-hidden="true"></svg><img id="mapImage" class="map-image" alt="" /><img id="mapImageBuffer" class="map-image" alt="" hidden /><svg id="structureOverlay" class="map-structure-overlay" aria-hidden="true"></svg><svg id="editOverlay" class="map-edit-overlay" aria-hidden="true"></svg></div>
 				</div>
 				<div id="emptyWorkspace" class="workspace-empty">
 					<strong data-label="emptyTitle"></strong><span data-label="emptyText"></span>
@@ -57,6 +70,7 @@
 				<button class="tool-icon" data-tool-button="editing" type="button"><svg><use href="#icon-pencil"/></svg></button>
 				<button class="tool-icon" data-tool-button="colors" type="button"><svg><use href="#icon-palette"/></svg></button>
 				<button class="tool-icon" data-tool-button="export" type="button"><svg><use href="#icon-download"/></svg></button>
+				<button class="tool-icon" data-tool-button="settings" type="button"><svg><use href="#icon-settings"/></svg></button>
 				<button class="tool-icon" data-tool-button="about" type="button"><svg><use href="#icon-info"/></svg></button>
 			</nav>
 
@@ -100,11 +114,34 @@
 
 					<section class="tool-view edit-tool-help" data-tool-panel="editing">
 						<h2 data-label="editingTitle"></h2>
+						<h3 class="tool-group-title" data-label="structureTools"></h3>
 						<div class="edit-tool-grid" role="group" data-label-aria="editingToolsAria">
 							<button class="edit-tool-tile active" data-edit-tool="wall" type="button" aria-pressed="true"><svg><use href="#icon-wall"/></svg><strong data-label="toolWall"></strong></button>
 							<button class="edit-tool-tile" data-edit-tool="corridor" type="button" aria-pressed="false"><svg><use href="#icon-route"/></svg><strong data-label="toolCorridor"></strong></button>
 							<button class="edit-tool-tile" data-edit-tool="roundRoom" type="button" aria-pressed="false"><svg><use href="#icon-circle"/></svg><strong data-label="toolRoundRoom"></strong></button>
 							<button class="edit-tool-tile" data-edit-tool="roomClass" type="button" aria-pressed="false"><svg><use href="#icon-room-class"/></svg><strong data-label="toolRoomClass"></strong></button>
+						</div>
+						<h3 class="tool-group-title" data-label="objectTools"></h3>
+						<div class="edit-tool-grid object-tool-grid" role="group" data-label-aria="objectToolsAria">
+							<button class="edit-tool-tile" data-edit-tool="coffin" type="button"><svg><use href="#icon-coffin"/></svg><strong data-label="toolCoffin"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="dais" type="button"><svg><use href="#icon-dais"/></svg><strong data-label="toolDais"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="altar" type="button"><svg><use href="#icon-altar"/></svg><strong data-label="toolAltar"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="fountain" type="button"><svg><use href="#icon-fountain"/></svg><strong data-label="toolFountain"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="column_round" type="button"><svg><use href="#icon-column"/></svg><strong data-label="toolColumnRound"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="column_square" type="button"><svg><use href="#icon-column"/></svg><strong data-label="toolColumnSquare"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="rock_small" type="button"><svg><use href="#icon-rock"/></svg><strong data-label="toolRockSmall"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="rock_medium" type="button"><svg><use href="#icon-rock"/></svg><strong data-label="toolRockMedium"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="rock_large" type="button"><svg><use href="#icon-rock"/></svg><strong data-label="toolRockLarge"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="stairs_up" type="button"><svg><use href="#icon-stairs"/></svg><strong data-label="toolStairsUp"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="stairs_down" type="button"><svg><use href="#icon-stairs"/></svg><strong data-label="toolStairsDown"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="entrance" type="button"><svg><use href="#icon-exit"/></svg><strong data-label="toolEntrance"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="exit" type="button"><svg><use href="#icon-exit"/></svg><strong data-label="toolExit"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="door_open" type="button"><svg><use href="#icon-door"/></svg><strong data-label="toolDoorOpen"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="door_closed" type="button"><svg><use href="#icon-door"/></svg><strong data-label="toolDoorClosed"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="door_locked" type="button"><svg><use href="#icon-door"/></svg><strong data-label="toolDoorLocked"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="door_secret" type="button"><svg><use href="#icon-door"/></svg><strong data-label="toolDoorSecret"></strong></button>
+							<button class="edit-tool-tile" data-edit-tool="waterBrush" type="button"><svg><use href="#icon-water"/></svg><strong data-label="toolWater"></strong></button>
+							<button class="edit-tool-tile danger" data-edit-tool="eraser" type="button"><svg><use href="#icon-eraser"/></svg><strong data-label="toolEraser"></strong></button>
 						</div>
 						<div class="edit-tool-details"><strong id="editToolTitle"></strong><p id="editToolHint" class="muted"></p><p id="editAreaShortcut" class="edit-shortcut"></p></div>
 					</section>
@@ -132,6 +169,11 @@
 						<button id="exportButton" class="ui-button primary full-width" type="button"><svg><use href="#icon-download"/></svg><span data-label="exportJpg"></span></button>
 					</section>
 
+					<section class="tool-view" data-tool-panel="settings">
+						<h2 data-label="settingsTitle"></h2>
+						<label class="setting-card"><span><strong data-label="fastMode"></strong><small data-label="fastModeHint"></small></span><input id="fastMode" type="checkbox" /></label>
+					</section>
+
 					<section class="tool-view" data-tool-panel="about">
 						<h2 data-label="aboutTitle"></h2>
 						<p data-label="aboutText"></p>
@@ -141,6 +183,6 @@
 				</div>
 			</aside>
 		</div>
-		<script src="/dungeon-editor/editor.js?v=20260801-3" defer></script>
+		<script src="/dungeon-editor/editor.js?v=20260801-8" defer></script>
 	</body>
 </html>

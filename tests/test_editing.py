@@ -2,7 +2,7 @@
 
 import pytest
 
-from dungeongen.webview.editing import apply_structure_operation, initialize_structure
+from dungeongen.webview.editing import apply_structure_operation, initialize_structure, normalize_structure
 from dungeongen.webview.project_types import ProjectValidationError
 
 
@@ -30,6 +30,156 @@ def test_wall_removes_floor_element_and_room_decoration() -> None:
     assert [2, 2] not in structure["floorCells"]
     assert layout["doors"] == []
     assert structure["clearedDecorationRoomIds"] == ["room-1"]
+
+
+def editable_objects_fixture() -> tuple[dict, dict]:
+    layout = layout_fixture()
+    structure = initialize_structure(layout)
+    structure["objectsInitialized"] = True
+    return structure, layout
+
+
+def test_object_state_is_initialized_in_structure_schema() -> None:
+    structure = initialize_structure(layout_fixture())
+
+    assert structure["objectsInitialized"] is False
+    assert structure["objects"] == []
+    assert structure["waterCells"] == []
+
+
+def test_places_rotated_coffin_on_floor_and_rejects_outside_floor() -> None:
+    structure, layout = editable_objects_fixture()
+
+    structure, layout = apply_structure_operation(
+        structure,
+        layout,
+        {"type": "placeObject", "objectType": "coffin", "cell": [1, 1], "rotation": 1},
+    )
+
+    coffin = structure["objects"][0]
+    assert coffin["type"] == "coffin"
+    assert coffin["rotation"] == 1
+    assert coffin["cells"] == [[1, 1], [2, 1]]
+
+    with pytest.raises(ProjectValidationError, match="invalidPlacement"):
+        apply_structure_operation(
+            structure,
+            layout,
+            {"type": "placeObject", "objectType": "altar", "cell": [0, 0], "rotation": 0},
+        )
+
+
+def test_boundary_door_can_be_placed_and_erased() -> None:
+    structure, layout = editable_objects_fixture()
+
+    structure, layout = apply_structure_operation(
+        structure,
+        layout,
+        {"type": "placeObject", "objectType": "door_open", "cell": [1, 1], "rotation": 0},
+    )
+    door = next(item for item in layout["doors"] if item.get("manual"))
+    assert door["direction"] == "north"
+
+    structure, layout = apply_structure_operation(
+        structure,
+        layout,
+        {"type": "eraseObject", "targetKind": "door", "id": door["id"]},
+    )
+    assert all(item.get("id") != door["id"] for item in layout["doors"])
+
+
+def test_eraser_removes_generated_decoration_by_stable_id() -> None:
+    structure, layout = editable_objects_fixture()
+    structure, layout = apply_structure_operation(
+        structure,
+        layout,
+        {"type": "placeObject", "objectType": "fountain", "cell": [1, 1], "rotation": 0},
+    )
+    structure["objects"][0]["source"] = "generated"
+    object_id = structure["objects"][0]["id"]
+
+    structure, _ = apply_structure_operation(
+        structure,
+        layout,
+        {"type": "eraseObject", "targetKind": "prop", "id": object_id},
+    )
+
+    assert structure["objects"] == []
+
+
+def test_water_brush_unions_floor_cells_and_eraser_removes_one_cell() -> None:
+    structure, layout = editable_objects_fixture()
+
+    structure, layout = apply_structure_operation(
+        structure,
+        layout,
+        {"type": "paintWater", "cells": [[1, 1], [2, 1]]},
+    )
+    structure, layout = apply_structure_operation(
+        structure,
+        layout,
+        {"type": "paintWater", "cells": [[2, 1], [3, 1]]},
+    )
+    assert structure["waterCells"] == [[1, 1], [2, 1], [3, 1]]
+
+    structure, _ = apply_structure_operation(
+        structure,
+        layout,
+        {"type": "eraseObject", "targetKind": "water", "cell": [2, 1]},
+    )
+    assert structure["waterCells"] == [[1, 1], [3, 1]]
+
+
+def test_wall_erases_overlapping_props_and_water() -> None:
+    structure, layout = editable_objects_fixture()
+    structure, layout = apply_structure_operation(
+        structure,
+        layout,
+        {"type": "placeObject", "objectType": "altar", "cell": [1, 1], "rotation": 0},
+    )
+    structure, layout = apply_structure_operation(
+        structure,
+        layout,
+        {"type": "paintWater", "cells": [[1, 1]]},
+    )
+
+    structure, _ = apply_structure_operation(
+        structure,
+        layout,
+        {"type": "paint", "mode": "wall", "cells": [[1, 1]]},
+    )
+
+    assert structure["objects"] == []
+    assert structure["waterCells"] == []
+
+
+def test_structure_revision_tracks_stale_render_snapshot() -> None:
+    layout = layout_fixture()
+    structure = initialize_structure(layout)
+
+    assert structure["revision"] == 0
+    assert structure["renderedRevision"] == 0
+    assert structure["renderedFloorCells"] == structure["floorCells"]
+
+    rendered_floor = structure["renderedFloorCells"]
+    structure, _ = apply_structure_operation(
+        structure, layout, {"type": "paint", "mode": "corridor", "cells": [[0, 0]]}
+    )
+
+    assert structure["revision"] == 1
+    assert structure["renderedRevision"] == 0
+    assert structure["renderedFloorCells"] == rendered_floor
+    assert [0, 0] in structure["floorCells"]
+    assert [0, 0] not in structure["renderedFloorCells"]
+
+
+def test_structure_rejects_render_revision_ahead_of_model() -> None:
+    layout = layout_fixture()
+    structure = initialize_structure(layout)
+    structure["renderedRevision"] = 1
+
+    with pytest.raises(ProjectValidationError, match="invalidProject"):
+        normalize_structure(structure, layout)
 
 
 def test_only_complete_four_by_four_floor_becomes_auto_room() -> None:
@@ -105,6 +255,119 @@ def test_editor_prefixed_edit_route_reaches_service() -> None:
     response = app.test_client().post("/dungeon-editor/api/edit")
     assert response.status_code == 401
     assert response.get_json() == {"success": False, "error": "unauthorized"}
+
+
+def test_editor_prefixed_render_route_reaches_service() -> None:
+    from dungeongen.webview.app import app
+
+    response = app.test_client().post("/dungeon-editor/api/render")
+    assert response.status_code == 401
+    assert response.get_json() == {"success": False, "error": "unauthorized"}
+
+
+def test_editor_prefixed_checkpoint_route_reaches_service() -> None:
+    from dungeongen.webview.app import app
+
+    response = app.test_client().post("/dungeon-editor/api/checkpoint")
+    assert response.status_code == 401
+    assert response.get_json() == {"success": False, "error": "unauthorized"}
+
+
+def test_checkpoint_validates_working_copy_without_svg_render() -> None:
+    from dungeongen.webview.project import checkpoint_project, default_project
+
+    layout = layout_fixture()
+    project = default_project()
+    project.update({
+        "clientRevision": 7,
+        "layout": layout,
+        "structure": initialize_structure(layout),
+        "renderSvg": "<svg></svg>",
+        "stats": {},
+    })
+
+    checkpoint = checkpoint_project({"project": project})
+
+    assert checkpoint["renderSvg"] is None
+    assert checkpoint["clientRevision"] == 7
+    assert checkpoint["structure"]["floorCells"] == project["structure"]["floorCells"]
+    assert "renderedFloorCells" not in checkpoint["structure"]
+
+
+def test_project_rejects_invalid_client_revision() -> None:
+    from dungeongen.webview.project import default_project, normalize_project
+
+    project = default_project()
+    project["clientRevision"] = -1
+    with pytest.raises(ProjectValidationError, match="invalidProject"):
+        normalize_project(project)
+
+
+def test_encoder_worker_is_served_by_editor() -> None:
+    from dungeongen.webview.app import app
+
+    response = app.test_client().get("/dungeon-editor/encoder-worker.js")
+    assert response.status_code == 200
+    assert response.mimetype == "application/javascript"
+    assert b"self.onmessage" in response.data
+
+
+def test_deferred_edit_skips_svg_render_and_keeps_snapshot() -> None:
+    from dungeongen.webview.project import default_project, edit_project
+
+    layout = layout_fixture()
+    structure = initialize_structure(layout)
+    project = default_project()
+    project.update({
+        "layout": layout,
+        "structure": structure,
+        "renderSvg": "<svg></svg>",
+        "stats": {},
+    })
+    stages: list[str] = []
+
+    edited = edit_project(
+        {
+            "project": project,
+            "operation": {"type": "paint", "mode": "corridor", "cells": [[0, 0]]},
+            "deferRender": True,
+        },
+        timing=lambda stage, _elapsed_ms: stages.append(stage),
+        validate_size=False,
+    )
+
+    assert stages == ["project_normalization", "structure_operation", "stats_update"]
+    assert edited["renderSvg"] == "<svg></svg>"
+    assert edited["structure"]["revision"] == 1
+    assert edited["structure"]["renderedRevision"] == 0
+    assert [0, 0] not in edited["structure"]["renderedFloorCells"]
+
+
+def test_canonical_render_advances_render_snapshot() -> None:
+    from dungeongen.webview.project import default_project, edit_project, render_edited_project
+
+    layout = layout_fixture()
+    project = default_project()
+    project.update({
+        "layout": layout,
+        "structure": initialize_structure(layout),
+        "renderSvg": "<svg></svg>",
+        "stats": {},
+    })
+    edited = edit_project(
+        {
+            "project": project,
+            "operation": {"type": "paint", "mode": "corridor", "cells": [[0, 0]]},
+            "deferRender": True,
+        },
+        validate_size=False,
+    )
+
+    rendered = render_edited_project(edited, validate_size=False)
+
+    assert rendered["renderSvg"].startswith("<svg")
+    assert rendered["structure"]["renderedRevision"] == rendered["structure"]["revision"] == 1
+    assert rendered["structure"]["renderedFloorCells"] == rendered["structure"]["floorCells"]
 
 
 def test_structural_room_numbers_use_bundled_typeface() -> None:

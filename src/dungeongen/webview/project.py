@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import random
 import re
 import time
@@ -41,6 +42,7 @@ from dungeongen.options import Options
 
 from .adapter import convert_dungeon
 from .editing import (
+    MAX_STRUCTURE_REVISION,
     apply_structure_operation,
     initialize_structure,
     normalize_structure,
@@ -202,6 +204,7 @@ def normalize_appearance(value: Any) -> dict[str, str]:
 def default_project() -> dict[str, Any]:
     return {
         "formatVersion": PROJECT_FORMAT_VERSION,
+        "clientRevision": 0,
         "generatorVersion": __version__,
         "parameters": normalize_parameters({}, choose_seed=False),
         "appearance": normalize_appearance({}),
@@ -227,6 +230,15 @@ def normalize_project(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or value.get("formatVersion") != PROJECT_FORMAT_VERSION:
         raise ProjectValidationError("invalidProject")
     project = default_project()
+    client_revision = value.get("clientRevision", 0)
+    if (
+        isinstance(client_revision, bool)
+        or not isinstance(client_revision, int)
+        or client_revision < 0
+        or client_revision > MAX_STRUCTURE_REVISION
+    ):
+        raise ProjectValidationError("invalidProject")
+    project["clientRevision"] = client_revision
     project["parameters"] = normalize_parameters(value.get("parameters"), choose_seed=False)
     project["appearance"] = normalize_appearance(value.get("appearance"))
 
@@ -405,10 +417,11 @@ def _render_map(
     *,
     show_numbers: bool | None = None,
     skip_decoration_room_ids: set[str] | None = None,
+    use_persisted_objects: bool = False,
 ):
     return convert_dungeon(
         dungeon,
-        water_depth=WATER_DEPTH_MAP[parameters["water"]],
+        water_depth=0 if use_persisted_objects else WATER_DEPTH_MAP[parameters["water"]],
         water_scale=0.018,
         water_res=0.2,
         water_stroke=3.5,
@@ -416,6 +429,7 @@ def _render_map(
         show_numbers=parameters["showNumbers"] if show_numbers is None else show_numbers,
         options=_render_options(appearance),
         skip_decoration_room_ids=skip_decoration_room_ids,
+        decorate_rooms=not use_persisted_objects,
     )
 
 
@@ -475,6 +489,8 @@ def _layout_dungeon(layout: dict[str, Any], parameters: dict[str, Any]) -> Dunge
         )
         dungeon.passages[passage.id] = passage
     for value in layout.get("doors", []):
+        if value.get("manual") is True:
+            continue
         door = LayoutDoor(
             x=int(value["x"]), y=int(value["y"]), direction=str(value.get("direction", "north")),
             door_type=door_types.get(str(value.get("type", "closed")), DoorType.CLOSED),
@@ -482,6 +498,8 @@ def _layout_dungeon(layout: dict[str, Any], parameters: dict[str, Any]) -> Dunge
         )
         dungeon.doors[door.id] = door
     for value in layout.get("stairs", []):
+        if value.get("manual") is True:
+            continue
         stair = LayoutStair(
             x=int(value["x"]), y=int(value["y"]), direction=str(value.get("direction", "north")),
             stair_dir=stair_types.get(str(value.get("type", "down")), StairDirection.DOWN),
@@ -489,6 +507,8 @@ def _layout_dungeon(layout: dict[str, Any], parameters: dict[str, Any]) -> Dunge
         )
         dungeon.stairs[stair.id] = stair
     for value in layout.get("exits", []):
+        if value.get("manual") is True:
+            continue
         exit_point = LayoutExit(
             x=int(value["x"]), y=int(value["y"]), direction=str(value.get("direction", "north")),
             exit_type=exit_types.get(str(value.get("type", "entrance")), ExitType.ENTRANCE),
@@ -627,11 +647,220 @@ def _draw_structure_numbers(canvas: Any, project: dict[str, Any], transform: Any
     canvas.restore()
 
 
+def _point_in_contour(point: tuple[float, float], contour: list[tuple[float, float]]) -> bool:
+    x, y = point
+    inside = False
+    previous = contour[-1] if contour else (0.0, 0.0)
+    for current in contour:
+        if (current[1] > y) != (previous[1] > y):
+            crossing_x = (previous[0] - current[0]) * (y - current[1]) / (previous[1] - current[1]) + current[0]
+            if x < crossing_x:
+                inside = not inside
+        previous = current
+    return inside
+
+
+def _prop_descriptor(prop: Any, map_bounds: tuple[int, int, int, int], index: int) -> dict[str, Any] | None:
+    from dungeongen.map.props import Altar, Coffin, Column, ColumnType, Dias, Fountain, Rock, StairsProp
+
+    if isinstance(prop, StairsProp):
+        return None
+    object_type: str
+    size: float | None = None
+    if isinstance(prop, Coffin):
+        object_type = "coffin"
+    elif isinstance(prop, Dias):
+        object_type = "dais"
+    elif isinstance(prop, Altar):
+        object_type = "altar"
+    elif isinstance(prop, Fountain):
+        object_type = "fountain"
+    elif isinstance(prop, Column):
+        object_type = "column_square" if prop._column_type == ColumnType.SQUARE else "column_round"
+    elif isinstance(prop, Rock):
+        size = float(prop._radius / CELL_SIZE)
+        object_type = "rock_small" if size <= 0.1 else "rock_medium" if size <= 1 / 6 else "rock_large"
+    else:
+        return None
+
+    centered = object_type in (
+        "fountain", "column_round", "column_square", "rock_small", "rock_medium", "rock_large"
+    )
+    anchor = prop.bounds.center if centered else (prop.grid_bounds.p1 if prop.grid_bounds else prop.bounds.p1)
+    x = anchor[0] / CELL_SIZE + map_bounds[0]
+    y = anchor[1] / CELL_SIZE + map_bounds[1]
+    if prop.grid_bounds:
+        left = math.floor(prop.grid_bounds.left / CELL_SIZE + map_bounds[0] + 1e-6)
+        top = math.floor(prop.grid_bounds.top / CELL_SIZE + map_bounds[1] + 1e-6)
+        width = max(1, round(prop.grid_bounds.width / CELL_SIZE))
+        height = max(1, round(prop.grid_bounds.height / CELL_SIZE))
+        cells = [[cell_x, cell_y] for cell_y in range(top, top + height) for cell_x in range(left, left + width)]
+    else:
+        cells = [[math.floor(x), math.floor(y)]]
+    rotation = int(round(prop.rotation.degrees / 90)) % 4
+    signature = f"{object_type}:{x:.4f}:{y:.4f}:{rotation}:{index}"
+    descriptor: dict[str, Any] = {
+        "id": f"generated-{hashlib.sha256(signature.encode('utf-8')).hexdigest()[:12]}",
+        "type": object_type,
+        "x": round(x, 4),
+        "y": round(y, 4),
+        "rotation": rotation,
+        "source": "generated",
+        "cells": cells,
+    }
+    if size is not None:
+        descriptor["size"] = round(size, 4)
+    return descriptor
+
+
+def materialize_project_objects(project: dict[str, Any]) -> None:
+    """Freeze generated props and water into editable project descriptors."""
+    structure = project["structure"]
+    if structure.get("objectsInitialized"):
+        return
+    dungeon = _layout_dungeon(project["layout"], project["parameters"])
+    dungeon_map = _render_map(dungeon, project["parameters"], TEMPLATE_APPEARANCE, show_numbers=False)
+    map_bounds = tuple(structure["mapBounds"])
+    descriptors: list[dict[str, Any]] = []
+    for element in dungeon_map.elements:
+        for prop in element.props:
+            descriptor = _prop_descriptor(prop, map_bounds, len(descriptors))
+            if descriptor is not None:
+                descriptors.append(descriptor)
+
+    water_cells: list[list[int]] = []
+    water_layer = dungeon_map.water_layer
+    if water_layer and water_layer.shapes:
+        floor = _structure_cells(structure)
+        for cell in floor:
+            point = (
+                (cell[0] - map_bounds[0] + 0.5) * CELL_SIZE - dungeon_map.bounds.x,
+                (cell[1] - map_bounds[1] + 0.5) * CELL_SIZE - dungeon_map.bounds.y,
+            )
+            for shape in water_layer.shapes:
+                if _point_in_contour(point, shape.outer) and not any(
+                    _point_in_contour(point, island) for island in shape.islands
+                ):
+                    water_cells.append([cell[0], cell[1]])
+                    break
+    structure["objects"] = descriptors
+    structure["waterCells"] = water_cells
+    structure["objectsInitialized"] = True
+
+
+def _make_persisted_prop(item: dict[str, Any], map_bounds: tuple[int, int, int, int]) -> Any:
+    from dungeongen.graphics.rotation import Rotation
+    from dungeongen.map.props import Altar, Coffin, Column, ColumnType, Dias, Fountain, Rock
+
+    x = (float(item["x"]) - map_bounds[0]) * CELL_SIZE
+    y = (float(item["y"]) - map_bounds[1]) * CELL_SIZE
+    rotation = Rotation.from_degrees(int(item.get("rotation", 0)) * 90)
+    object_type = item["type"]
+    if object_type == "coffin":
+        return Coffin((x, y), rotation)
+    if object_type == "dais":
+        return Dias((x, y), rotation)
+    if object_type == "altar":
+        return Altar((x, y), rotation)
+    if object_type == "fountain":
+        return Fountain((x, y), rotation)
+    if object_type in ("column_round", "column_square"):
+        column_type = ColumnType.SQUARE if object_type == "column_square" else ColumnType.ROUND
+        return Column((x, y), column_type, rotation)
+    radius = float(item.get("size", {
+        "rock_small": 0.08,
+        "rock_medium": 0.135,
+        "rock_large": 0.21,
+    }[object_type])) * CELL_SIZE
+    random_state = random.getstate()
+    random.seed(int(hashlib.sha256(item["id"].encode("utf-8")).hexdigest()[:8], 16))
+    try:
+        return Rock((x, y), radius)
+    finally:
+        random.setstate(random_state)
+
+
+def _apply_persisted_objects(dungeon_map: Any, project: dict[str, Any]) -> None:
+    structure = project["structure"]
+    map_bounds = tuple(structure["mapBounds"])
+    elements = [element for element in dungeon_map.elements if element.__class__.__name__ != "Exit"]
+    for item in structure.get("objects", []):
+        prop = _make_persisted_prop(item, map_bounds)
+        center = prop.grid_bounds.center if prop.grid_bounds else prop.bounds.center
+        container = next((element for element in elements if element.contains_point(*center)), None)
+        if container is None and elements:
+            container = elements[0]
+        if container is not None:
+            container.add_prop(prop)
+
+    from dungeongen.graphics.rotation import Rotation
+    from dungeongen.map.door import Door, DoorOrientation, DoorType as MapDoorType
+    from dungeongen.map.enums import RoomDirection
+    from dungeongen.map.exit import Exit as MapExit
+    from dungeongen.map.props import StairsProp
+
+    direction_rotations = {
+        "north": Rotation.ROT_0,
+        "east": Rotation.ROT_90,
+        "south": Rotation.ROT_180,
+        "west": Rotation.ROT_270,
+    }
+    room_directions = {
+        "north": RoomDirection.NORTH,
+        "east": RoomDirection.EAST,
+        "south": RoomDirection.SOUTH,
+        "west": RoomDirection.WEST,
+    }
+
+    def container_at(x: int, y: int) -> Any:
+        center_x = (x - map_bounds[0] + 0.5) * CELL_SIZE
+        center_y = (y - map_bounds[1] + 0.5) * CELL_SIZE
+        return next((element for element in elements if element.contains_point(center_x, center_y)), elements[0] if elements else None)
+
+    for item in project["layout"].get("stairs", []):
+        if item.get("manual") is not True:
+            continue
+        grid_x, grid_y = int(item["x"]) - map_bounds[0], int(item["y"]) - map_bounds[1]
+        prop = StairsProp.at_grid(grid_x, grid_y, direction_rotations.get(item.get("direction"), Rotation.ROT_0))
+        container = container_at(int(item["x"]), int(item["y"]))
+        if container is not None:
+            container.add_prop(prop)
+    for item in project["layout"].get("doors", []):
+        if item.get("manual") is not True:
+            continue
+        direction = item.get("direction", "north")
+        orientation = DoorOrientation.HORIZONTAL if direction in ("east", "west") else DoorOrientation.VERTICAL
+        door_type = MapDoorType.OPEN if item.get("type") in ("open", "secret") else MapDoorType.CLOSED
+        door = Door.from_grid(int(item["x"]) - map_bounds[0], int(item["y"]) - map_bounds[1], orientation, door_type)
+        dungeon_map.add_element(door)
+        container = container_at(int(item["x"]), int(item["y"]))
+        if container is not None:
+            container.connect_to(door)
+    for item in project["layout"].get("exits", []):
+        if item.get("manual") is not True:
+            continue
+        exit_element = MapExit.from_grid(
+            int(item["x"]) - map_bounds[0],
+            int(item["y"]) - map_bounds[1],
+            room_directions.get(item.get("direction"), RoomDirection.NORTH),
+        )
+        dungeon_map.add_element(exit_element)
+        container = container_at(int(item["x"]), int(item["y"]))
+        if container is not None:
+            container.connect_to(exit_element)
+    dungeon_map.set_manual_water_cells([
+        (int(cell[0]) - map_bounds[0], int(cell[1]) - map_bounds[1])
+        for cell in structure.get("waterCells", [])
+    ])
+
+
 def _edited_map(
     project: dict[str, Any],
     appearance: dict[str, str],
     timing: EditTimingCallback | None = None,
 ):
+    if not project["structure"].get("objectsInitialized"):
+        materialize_project_objects(project)
     with _timed_edit_stage(timing, "layout_rebuild"):
         dungeon = _layout_dungeon(project["layout"], project["parameters"])
     cleared = set(project["structure"].get("clearedDecorationRoomIds", []))
@@ -639,9 +868,11 @@ def _edited_map(
         dungeon_map = _render_map(
             dungeon, project["parameters"], appearance,
             show_numbers=False, skip_decoration_room_ids=cleared,
+            use_persisted_objects=True,
         )
     with _timed_edit_stage(timing, "structure_shapes"):
         _apply_structure_shapes(dungeon_map, project)
+        _apply_persisted_objects(dungeon_map, project)
     return dungeon_map
 
 
@@ -691,7 +922,7 @@ def _generate_dungeon(parameters: dict[str, Any]) -> tuple[Dungeon, list[Any], s
     return dungeon, violations, validation
 
 
-def generate_project(value: Any) -> dict[str, Any]:
+def generate_project(value: Any, *, render_svg: bool = True) -> dict[str, Any]:
     source = value.get("parameters") if isinstance(value, dict) and "parameters" in value else value
     parameters = normalize_parameters(source, choose_seed=True)
     dungeon, violations, validation = _generate_dungeon(parameters)
@@ -710,12 +941,17 @@ def generate_project(value: Any) -> dict[str, Any]:
         "generatorVersion": __version__,
         "parameters": parameters,
         "appearance": normalize_appearance({}),
-        "renderSvg": _render_svg(dungeon, parameters),
+        "renderSvg": None,
         "layout": layout,
         "structure": initialize_structure(layout),
         "stats": stats,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
     }
+    materialize_project_objects(project)
+    if render_svg:
+        project["renderSvg"] = render_project_svg(project)
+        project["structure"]["renderedFloorCells"] = project["structure"]["floorCells"]
+        project["structure"]["renderedRevision"] = project["structure"]["revision"]
     project_bytes(project)
     return project
 
@@ -733,9 +969,18 @@ def edit_project(
         if project["layout"] is None or project["structure"] is None:
             raise ProjectValidationError("emptyProject")
     with _timed_edit_stage(timing, "structure_operation"):
-        structure, layout = apply_structure_operation(
-            project["structure"], project["layout"], value.get("operation")
-        )
+        operation = value.get("operation")
+        if isinstance(operation, dict) and operation.get("type") == "initializeObjects":
+            if not project["structure"].get("objectsInitialized"):
+                if project["structure"]["revision"] >= MAX_STRUCTURE_REVISION:
+                    raise ProjectValidationError("invalidEdit")
+                materialize_project_objects(project)
+                project["structure"]["revision"] += 1
+            structure, layout = project["structure"], project["layout"]
+        else:
+            structure, layout = apply_structure_operation(
+                project["structure"], project["layout"], operation
+            )
     project["structure"] = structure
     project["layout"] = layout
     with _timed_edit_stage(timing, "stats_update"):
@@ -745,8 +990,60 @@ def edit_project(
             "doors": len(layout.get("doors", [])),
             "exits": len(layout.get("exits", [])),
         }
+    defer_render = value.get("deferRender", False)
+    if not isinstance(defer_render, bool):
+        raise ProjectValidationError("invalidEdit")
+    if not defer_render:
+        with _timed_edit_stage(timing, "render_svg_total"):
+            project["renderSvg"] = render_project_svg(project, timing=timing)
+        project["structure"]["renderedRevision"] = project["structure"]["revision"]
+        project["structure"]["renderedFloorCells"] = project["structure"]["floorCells"]
+    if validate_size:
+        project_bytes(project, timing=timing)
+    return project
+
+
+def checkpoint_project(value: Any, *, validate_size: bool = True) -> dict[str, Any]:
+    """Validate a browser working copy without invoking the Skia renderer."""
+    if not isinstance(value, dict):
+        raise ProjectValidationError("invalidProject")
+    project = normalize_project(value.get("project"))
+    if project["layout"] is None or project["structure"] is None:
+        raise ProjectValidationError("emptyProject")
+    project["renderSvg"] = None
+    structure = project["structure"]
+    layout = project["layout"]
+    project["stats"] = {
+        **(project["stats"] or {}),
+        "rooms": sum(1 for room in structure["rooms"] if not room["suppressed"]),
+        "doors": len(layout.get("doors", [])),
+        "stairs": len(layout.get("stairs", [])),
+        "exits": len(layout.get("exits", [])),
+    }
+    # The client-first workspace uses floorCells directly. The rendered copy is
+    # only an SVG overlay baseline and would duplicate the largest project list
+    # in every checkpoint response and durable save.
+    structure.pop("renderedFloorCells", None)
+    if validate_size:
+        project_bytes(project)
+    return project
+
+
+def render_edited_project(
+    value: Any,
+    timing: EditTimingCallback | None = None,
+    *,
+    validate_size: bool = True,
+) -> dict[str, Any]:
+    source = value.get("project") if isinstance(value, dict) and "project" in value else value
+    with _timed_edit_stage(timing, "project_normalization"):
+        project = normalize_project(source)
+        if project["layout"] is None or project["structure"] is None:
+            raise ProjectValidationError("emptyProject")
     with _timed_edit_stage(timing, "render_svg_total"):
         project["renderSvg"] = render_project_svg(project, timing=timing)
+    project["structure"]["renderedRevision"] = project["structure"]["revision"]
+    project["structure"]["renderedFloorCells"] = project["structure"]["floorCells"]
     if validate_size:
         project_bytes(project, timing=timing)
     return project

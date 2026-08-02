@@ -1,5 +1,5 @@
 {
-	"port": 5050,
+	"port": 8094,
 	"workers": 2,
 	"threads": 2,
 	"requestTimeoutSeconds": 180,

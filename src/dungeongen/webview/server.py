@@ -17,12 +17,12 @@ def load_config() -> dict[str, int]:
             with path.open("r", encoding="utf-8") as source:
                 value = json.load(source)
             return {
-                "port": int(value.get("port", 5050)),
+                "port": int(value.get("port", 8094)),
                 "workers": int(value.get("workers", 2)),
                 "threads": int(value.get("threads", 2)),
                 "timeout": int(value.get("requestTimeoutSeconds", 180)),
             }
-    return {"port": 5050, "workers": 2, "threads": 2, "timeout": 180}
+    return {"port": 8094, "workers": 2, "threads": 2, "timeout": 180}
 
 
 class DungeongenApplication(BaseApplication):

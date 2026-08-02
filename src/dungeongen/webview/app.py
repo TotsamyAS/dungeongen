@@ -430,4 +430,4 @@ def export_project() -> tuple[Response, int] | Response:
 
 if __name__ == "__main__":
     config = _service_config()
-    app.run(host="0.0.0.0", port=int(config.get("port", 5050)), threaded=True, use_reloader=False)
+    app.run(host="0.0.0.0", port=int(config.get("port", 8094)), threaded=True, use_reloader=False)

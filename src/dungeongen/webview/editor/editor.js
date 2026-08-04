@@ -1,5 +1,5 @@
 const fallbackLocale = 'ru';
-const editorAssetVersion = '20260801-17';
+const editorAssetVersion = '20260804-1';
 const defaultColorApplyDelayMs = 350;
 const defaultCanonicalRenderDelayMs = 10000;
 const defaultPreviewSizePixels = 48;
@@ -43,7 +43,7 @@ try {
 }
 const dictionaries = new Map();
 let labels = {};
-let hostState = { projects: [], customThemes: [], selectedProjectId: null, storage: null };
+let hostState = { projects: [], customThemes: [], selectedProjectId: null, storage: null, supportEmail: '' };
 let currentProject = null;
 let currentProjectId = null;
 let currentProjectName = '';
@@ -156,6 +156,8 @@ const elements = {
 	editAreaShortcut: document.getElementById('editAreaShortcut'),
 	stats: document.getElementById('stats'),
 	sourceLink: document.getElementById('sourceLink'),
+	supportEmailLink: document.getElementById('supportEmailLink'),
+	supportEmailText: document.getElementById('supportEmailText'),
 	zoomOut: document.getElementById('zoomOut'),
 	zoomIn: document.getElementById('zoomIn'),
 	fitMap: document.getElementById('fitMap'),
@@ -609,7 +611,7 @@ function applyLabels() {
 	});
 	const toolLabels = {
 		projects: 'toolProjects', generation: 'toolGeneration', editing: 'toolEditing', colors: 'toolColors',
-		export: 'toolExport', settings: 'toolSettings', about: 'toolAbout'
+		export: 'toolExport', settings: 'toolSettings', support: 'toolSupport', about: 'toolAbout'
 	};
 	document.querySelectorAll('[data-tool-button]').forEach((button) => {
 		const text = t(toolLabels[button.dataset.toolButton]);
@@ -1187,6 +1189,11 @@ function renderAll() {
 	syncHostToast();
 	elements.sourceLink.href = hostState.sourceCodeURL || '#';
 	elements.sourceLink.hidden = !hostState.sourceCodeURL;
+	const supportEmail = typeof hostState.supportEmail === 'string' ? hostState.supportEmail.trim() : '';
+	elements.supportEmailLink.href = supportEmail ? `mailto:${supportEmail}` : '#';
+	elements.supportEmailLink.hidden = !supportEmail;
+	elements.supportEmailLink.setAttribute('aria-label', t('supportContactAria', { email: supportEmail }));
+	elements.supportEmailText.textContent = supportEmail;
 	elements.generateButton.disabled = !currentProjectId || generating || Boolean(hostState.loading);
 	elements.exportButton.disabled = !currentProject?.structure || generating || Boolean(hostState.exporting);
 	elements.openGeneration.disabled = !currentProjectId;

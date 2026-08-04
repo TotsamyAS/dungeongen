@@ -1091,3 +1091,50 @@ select {
 		padding: 12px;
 	}
 }
+
+
+.support-view {
+	display: grid;
+	align-content: start;
+	gap: 14px;
+}
+
+.support-contact {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 14px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--panel) 72%, transparent);
+	color: var(--text);
+	text-decoration: none;
+	transition: border-color .14s, background .14s;
+}
+
+.support-contact:hover,
+.support-contact:focus-visible {
+	border-color: color-mix(in srgb, var(--gold) 68%, var(--line));
+	background: color-mix(in srgb, var(--gold) 10%, var(--panel));
+}
+
+.support-contact > svg {
+	width: 22px;
+	height: 22px;
+	flex: 0 0 auto;
+	color: var(--gold);
+}
+
+.support-contact > span {
+	min-width: 0;
+	display: grid;
+	gap: 3px;
+}
+
+.support-contact small {
+	color: var(--muted);
+}
+
+.support-contact strong {
+	overflow-wrap: anywhere;
+}

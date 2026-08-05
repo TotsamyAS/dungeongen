@@ -1138,3 +1138,132 @@ select {
 .support-contact strong {
 	overflow-wrap: anywhere;
 }
+
+/* Main application theme parity and editor chrome fixes. */
+:root {
+	font-family: Georgia, 'Times New Roman', serif;
+	--panel: rgba(18, 7, 5, 0.76);
+	--panel-strong: rgba(6, 0, 0, 0.88);
+	--card: rgba(0, 0, 0, 0.24);
+	--field: rgba(250, 249, 217, 0.08);
+}
+
+:root[data-theme='light'] {
+	--wine: #9a4635;
+	--wine-dark: #6b241f;
+	--gold: #a86c20;
+	--copper: #b46b2c;
+	--parchment: #fff7d7;
+	--vellum: #6c2d21;
+	--ink: #2b130d;
+	--good: #4f7f35;
+	--bad: #a54233;
+	--text: #2b130d;
+	--muted: #7c5635;
+	--line: rgba(139, 86, 36, 0.36);
+	--panel: rgba(255, 247, 216, 0.82);
+	--panel-strong: rgba(243, 218, 170, 0.94);
+	--card: rgba(255, 250, 229, 0.66);
+	--field: rgba(104, 54, 31, 0.08);
+	--shadow: rgba(105, 60, 29, 0.2);
+	--scrollbar-thumb: rgba(154, 96, 42, 0.58);
+	--scrollbar-thumb-hover: rgba(108, 45, 33, 0.78);
+}
+
+button,
+input,
+select,
+textarea,
+.session-title strong,
+.tool-view h2,
+.dialog-card h2 {
+	font-family: inherit;
+}
+
+/* Support must obey normal tool-panel visibility. */
+.tool-view.support-view:not(.active) {
+	display: none;
+}
+
+.tool-icon:disabled {
+	opacity: 0.36;
+	cursor: not-allowed;
+}
+
+.tool-icon:disabled:hover {
+	border-color: transparent;
+	color: var(--muted);
+	background: transparent;
+	box-shadow: none;
+	transform: none;
+}
+
+/* Keep header tooltips above the scrolling tool content. */
+.session-bar {
+	z-index: 4;
+	overflow: visible;
+}
+
+/* Header tooltips stay inside the right panel instead of being clipped by the workspace. */
+#backButton[data-tooltip]::after,
+#backLink[data-tooltip]::after {
+	left: 0;
+	right: auto;
+	top: calc(100% + 7px);
+	transform: translateY(-4px);
+}
+
+#backButton[data-tooltip]:hover::after,
+#backButton[data-tooltip]:focus-visible::after,
+#backLink[data-tooltip]:hover::after,
+#backLink[data-tooltip]:focus-visible::after {
+	transform: translateY(0);
+}
+
+
+/* Match Nortantis header export feedback. */
+.session-action-spinner {
+	display: none;
+	width: 16px;
+	height: 16px;
+	border: 2px solid rgba(216, 139, 53, 0.28);
+	border-top-color: var(--gold);
+	border-radius: 50%;
+	animation: session-action-spin 0.75s linear infinite;
+}
+
+.session-action.loading {
+	opacity: 1;
+}
+
+.session-action.loading .session-action-export-icon {
+	display: none;
+}
+
+.session-action.loading .session-action-spinner {
+	display: block;
+}
+
+@keyframes session-action-spin {
+	to { transform: rotate(360deg); }
+}
+
+/* Keep the empty-workspace primary action readable in light theme, including disabled state. */
+:root[data-theme='light'] #openGeneration.ui-button.primary,
+:root[data-theme='light'] #openGeneration.ui-button.primary:hover,
+:root[data-theme='light'] #openGeneration.ui-button.primary:disabled {
+	color: #fff7d7 !important;
+	-webkit-text-fill-color: #fff7d7;
+	border-color: var(--wine);
+	background: linear-gradient(180deg, #a6533e, #7b2d24 58%, #5a1b17);
+}
+
+:root[data-theme='light'] #openGeneration.ui-button.primary > span,
+:root[data-theme='light'] #openGeneration.ui-button.primary > svg {
+	color: inherit !important;
+	-webkit-text-fill-color: inherit;
+}
+
+:root[data-theme='light'] #openGeneration.ui-button.primary:disabled {
+	opacity: 0.72;
+}

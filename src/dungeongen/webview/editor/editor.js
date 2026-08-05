@@ -1,5 +1,5 @@
 const fallbackLocale = 'ru';
-const editorAssetVersion = '20260805-1';
+const editorAssetVersion = '20260805-2';
 const defaultColorApplyDelayMs = 350;
 const defaultCanonicalRenderDelayMs = 10000;
 const defaultPreviewSizePixels = 48;
@@ -8,6 +8,7 @@ const defaultWorkingCopyIntervalMs = 300000;
 const defaultThemeSaveTimeoutMs = 20000;
 const defaultCellSize = 60;
 const defaultCanvasPaddingCells = 2;
+const alwaysAvailablePanels = new Set(['projects', 'support', 'about']);
 const maxHistoryEntries = 20;
 const structureTools = new Set(['wall', 'corridor', 'roundRoom', 'roomClass']);
 const propTools = new Set([
@@ -108,6 +109,8 @@ let placementObjectId = '';
 let renameProjectCandidate = null;
 let lastHostStatusCode = '';
 let toastTimer = 0;
+let allowNextProjectOpen = false;
+let generatedSeedValue = '';
 const placementIndexCache = { project: null, value: null };
 const encoderRequests = new Map();
 const pendingClassificationCells = new Set();
@@ -149,6 +152,8 @@ const elements = {
 	editorSideFire: document.getElementById('editorSideFire'),
 	generateButton: document.getElementById('generateButton'),
 	exportButton: document.getElementById('exportButton'),
+	saveProject: document.getElementById('saveProject'),
+	exportProject: document.getElementById('exportProject'),
 	backButton: document.getElementById('backButton'),
 	themeToggle: document.getElementById('themeToggle'),
 	undoEdit: document.getElementById('undoEdit'),
@@ -636,6 +641,8 @@ function applyLabels() {
 		button.dataset.tooltip = text;
 	});
 	setControlLabel(elements.backButton, t('back'));
+	setControlLabel(elements.saveProject, t('save'));
+	setControlLabel(elements.exportProject, t('export'));
 	renderThemeToggle();
 	setControlLabel(elements.zoomIn, t('zoomIn'));
 	setControlLabel(elements.zoomOut, t('zoomOut'));
@@ -1205,13 +1212,24 @@ function renderAll() {
 	elements.supportEmailLink.hidden = !supportEmail;
 	elements.supportEmailLink.setAttribute('aria-label', t('supportContactAria', { email: supportEmail }));
 	elements.supportEmailText.textContent = supportEmail;
-	elements.generateButton.disabled = !currentProjectId || generating || Boolean(hostState.loading);
+	const hasActiveProject = Boolean(currentProjectId);
+	elements.generateButton.disabled = !hasActiveProject || generating || Boolean(hostState.loading);
 	elements.exportButton.disabled = !currentProject?.structure || generating || Boolean(hostState.exporting);
-	elements.openGeneration.disabled = !currentProjectId;
+	elements.saveProject.disabled = !currentProject?.structure || generating || Boolean(hostState.saving);
+	elements.exportProject.disabled = !currentProject?.structure || generating || Boolean(hostState.exporting);
+	elements.exportProject.classList.toggle('loading', Boolean(hostState.exporting));
+	elements.exportProject.setAttribute('aria-busy', String(Boolean(hostState.exporting)));
+	elements.openGeneration.disabled = !hasActiveProject;
+	elements.openGeneration.hidden = !hasActiveProject;
 	for (const input of Object.values(elements.colors)) input.disabled = !currentProject?.structure;
 	elements.palettePresetButton.disabled = !currentProject?.structure || !colorPresets.length;
 	renderPaletteThemeControls();
+	document.querySelectorAll('[data-tool-button]').forEach((button) => {
+		const panel = button.dataset.toolButton;
+		button.disabled = !hasActiveProject && !alwaysAvailablePanels.has(panel);
+	});
 	document.querySelector('[data-tool-button="editing"]').disabled = !canEditMap();
+	if (!hasActiveProject && !alwaysAvailablePanels.has(activePanel)) activateTool('projects');
 	document.querySelectorAll('[data-edit-tool]').forEach((button) => { button.disabled = !canEditMap(); });
 	elements.undoEdit.disabled = !undoStack.length || generating || editing;
 	elements.redoEdit.disabled = !redoStack.length || generating || editing;
@@ -1274,6 +1292,7 @@ function renderProjects() {
 		size.textContent = formatBytes(project.size);
 		open.append(name, size);
 		open.addEventListener('click', () => void checkpointWorkingCopy().then(() => {
+			allowNextProjectOpen = true;
 			send('dungeongen:project-open', { projectId: project.id });
 		}));
 
@@ -1321,6 +1340,7 @@ function renderStats() {
 }
 
 function readParameters() {
+	const seedValue = elements.fields.seed.value.trim();
 	return {
 		size: elements.fields.size.value,
 		symmetry: elements.fields.symmetry.value,
@@ -1328,7 +1348,7 @@ function readParameters() {
 		pack: elements.fields.pack.value,
 		roomSize: elements.fields.roomSize.value,
 		water: elements.fields.water.value,
-		seed: elements.fields.seed.value.trim() || null,
+		seed: seedValue && seedValue !== generatedSeedValue ? seedValue : null,
 		roundRooms: elements.fields.roundRooms.checked,
 		halls: elements.fields.halls.checked,
 		showNumbers: elements.fields.showNumbers.checked
@@ -1339,7 +1359,8 @@ function writeParameters(parameters = {}) {
 	for (const key of ['size', 'symmetry', 'cross', 'pack', 'roomSize', 'water']) {
 		if (typeof parameters[key] === 'string') elements.fields[key].value = parameters[key];
 	}
-	elements.fields.seed.value = parameters.seed ?? '';
+	generatedSeedValue = parameters.seed == null ? '' : String(parameters.seed);
+	elements.fields.seed.value = generatedSeedValue;
 	elements.fields.roundRooms.checked = parameters.roundRooms === true;
 	elements.fields.halls.checked = parameters.halls !== false;
 	elements.fields.showNumbers.checked = parameters.showNumbers !== false;
@@ -3022,9 +3043,6 @@ function applyHostState(next) {
 	hostState = { ...hostState, ...(next ?? {}) };
 	capability = typeof hostState.capability === 'string' ? hostState.capability : capability;
 	if (hostState.statusCode || hostState.errorCode) localStatus = '';
-	if (hostState.selectedProjectId && hostState.selectedProjectId !== currentProjectId) {
-		currentProjectId = hostState.selectedProjectId;
-	}
 	if (hostState.theme === 'light' || hostState.theme === 'dark') {
 		applyTheme(hostState.theme, { persist: false });
 	}
@@ -3038,6 +3056,7 @@ function applyHostState(next) {
 }
 
 function activateTool(name) {
+	if (!currentProjectId && !alwaysAvailablePanels.has(name)) return;
 	if (name === 'editing' && !canEditMap()) return;
 	if (name !== 'colors' && paletteMenuOpen) closeColorPresetMenu();
 	activePanel = name;
@@ -3239,8 +3258,14 @@ function handleThemeFailure(message, operation) {
 elements.createProjectForm.addEventListener('submit', (event) => {
 	event.preventDefault();
 	const name = elements.newProjectName.value.trim() || t('productTitle');
-	void checkpointWorkingCopy().then(() => send('dungeongen:project-create', { name }));
+	void checkpointWorkingCopy().then(() => {
+		allowNextProjectOpen = true;
+		send('dungeongen:project-create', { name });
+	});
 	elements.newProjectName.value = '';
+});
+elements.fields.seed.addEventListener('input', () => {
+	generatedSeedValue = '';
 });
 elements.renameProjectForm.addEventListener('submit', (event) => {
 	event.preventDefault();
@@ -3283,7 +3308,16 @@ for (const input of Object.values(elements.colors)) input.addEventListener('inpu
 	syncColorPreset(readAppearance());
 	scheduleAppearanceUpdate();
 });
-elements.exportButton.addEventListener('click', async () => {
+async function saveCurrentProject() {
+	if (!currentProjectId || !currentProject?.structure) return;
+	localStatus = 'statusSaving';
+	renderAll();
+	if (!await checkpointWorkingCopy()) return;
+	if (!await ensureCanonicalProject({ persistPreview: false })) return;
+	await autosaveCurrent(null, true);
+}
+
+async function exportCurrentProject() {
 	if (!currentProjectId || !currentProject?.structure) return;
 	localStatus = 'statusExporting';
 	renderAll();
@@ -3299,7 +3333,11 @@ elements.exportButton.addEventListener('click', async () => {
 		projectData: compactProject(project),
 		previewBase64
 	});
-});
+}
+
+elements.saveProject.addEventListener('click', () => void saveCurrentProject());
+elements.exportProject.addEventListener('click', () => void exportCurrentProject());
+elements.exportButton.addEventListener('click', () => void exportCurrentProject());
 elements.backButton.addEventListener('click', () => void checkpointWorkingCopy().then(() => send('dungeongen:back')));
 elements.themeToggle.addEventListener('click', toggleTheme);
 elements.undoEdit.addEventListener('click', () => void undoEdit());
@@ -3504,7 +3542,10 @@ window.addEventListener('message', (event) => {
 		void loadLocale(String(event.data.locale ?? fallbackLocale));
 		applyHostState({ ...event.data.state, theme: event.data.theme });
 	}
-	if (event.data.type === 'dungeongen:open') void openProject(event.data);
+	if (event.data.type === 'dungeongen:open' && allowNextProjectOpen) {
+		allowNextProjectOpen = false;
+		void openProject(event.data);
+	}
 	if (event.data.type === 'dungeongen:theme-saved') handleThemeSaved(event.data);
 	if (event.data.type === 'dungeongen:theme-deleted') handleThemeDeleted(event.data);
 	if (event.data.type === 'dungeongen:theme-save-failed') handleThemeFailure(event.data, 'save');

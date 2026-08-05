@@ -53,6 +53,8 @@ from .project_types import ProjectValidationError
 PROJECT_FORMAT_VERSION = 1
 MAX_PROJECT_BYTES = 8 * 1024 * 1024
 MAX_SEED = 2**31 - 1
+DEFAULT_GRID_SIZE = CELL_SIZE
+CANVAS_PADDING_CELLS = 2
 EditTimingCallback = Callable[[str, float], None]
 
 DEFAULT_PARAMETERS: dict[str, Any] = {
@@ -433,23 +435,47 @@ def _render_map(
     )
 
 
-def _canvas_dimensions(dungeon: Dungeon, grid_size: int, padding: int) -> tuple[int, int]:
+def _resolve_canvas_padding(grid_size: int, padding: int | None) -> int:
+    if isinstance(grid_size, bool) or not isinstance(grid_size, int) or grid_size <= 0:
+        raise ProjectValidationError("renderBounds")
+    resolved = grid_size * CANVAS_PADDING_CELLS if padding is None else padding
+    if (
+        isinstance(resolved, bool)
+        or not isinstance(resolved, int)
+        or resolved < 0
+        or resolved % grid_size != 0
+    ):
+        raise ProjectValidationError("renderBounds")
+    return resolved
+
+
+def _canvas_dimensions(dungeon: Dungeon, grid_size: int, padding: int | None) -> tuple[int, int]:
+    resolved_padding = _resolve_canvas_padding(grid_size, padding)
     bounds = dungeon.bounds
     width_cells = bounds[2] - bounds[0]
     height_cells = bounds[3] - bounds[1]
     if width_cells <= 0 or height_cells <= 0 or width_cells > 60 or height_cells > 60:
         raise ProjectValidationError("renderBounds")
-    return width_cells * grid_size + padding * 2, height_cells * grid_size + padding * 2
+    return (
+        width_cells * grid_size + resolved_padding * 2,
+        height_cells * grid_size + resolved_padding * 2,
+    )
 
 
-def _render_svg(dungeon: Dungeon, parameters: dict[str, Any], grid_size: int = 64, padding: int = 128) -> str:
-    canvas_width, canvas_height = _canvas_dimensions(dungeon, grid_size, padding)
+def _render_svg(
+    dungeon: Dungeon,
+    parameters: dict[str, Any],
+    grid_size: int = DEFAULT_GRID_SIZE,
+    padding: int | None = None,
+) -> str:
+    resolved_padding = _resolve_canvas_padding(grid_size, padding)
+    canvas_width, canvas_height = _canvas_dimensions(dungeon, grid_size, resolved_padding)
     dungeon_map = _render_map(dungeon, parameters, TEMPLATE_APPEARANCE)
     stream = skia.DynamicMemoryWStream()
     canvas = skia.SVGCanvas.Make(skia.Rect.MakeWH(canvas_width, canvas_height), stream)
     transform = skia.Matrix()
-    transform.setScale(grid_size / 64, grid_size / 64)
-    transform.postTranslate(padding, padding)
+    transform.setScale(grid_size / CELL_SIZE, grid_size / CELL_SIZE)
+    transform.postTranslate(resolved_padding, resolved_padding)
     dungeon_map.render(canvas, transform)
     del canvas
     return stream.detachAsData().bytes().decode("utf-8")
@@ -890,30 +916,41 @@ def _edited_map(
     return dungeon_map
 
 
-def _project_canvas_dimensions(project: dict[str, Any], grid_size: int = 64, padding: int = 128) -> tuple[int, int]:
+def _project_canvas_dimensions(
+    project: dict[str, Any],
+    grid_size: int = DEFAULT_GRID_SIZE,
+    padding: int | None = None,
+) -> tuple[int, int]:
+    resolved_padding = _resolve_canvas_padding(grid_size, padding)
     bounds = project["structure"]["mapBounds"]
     width_cells = bounds[2] - bounds[0]
     height_cells = bounds[3] - bounds[1]
     if width_cells <= 0 or height_cells <= 0 or width_cells > 60 or height_cells > 60:
         raise ProjectValidationError("renderBounds")
-    return width_cells * grid_size + padding * 2, height_cells * grid_size + padding * 2
+    return (
+        width_cells * grid_size + resolved_padding * 2,
+        height_cells * grid_size + resolved_padding * 2,
+    )
 
 
 def render_project_svg(
     project: dict[str, Any],
-    grid_size: int = 64,
-    padding: int = 128,
+    grid_size: int = DEFAULT_GRID_SIZE,
+    padding: int | None = None,
     timing: EditTimingCallback | None = None,
 ) -> str:
+    resolved_padding = _resolve_canvas_padding(grid_size, padding)
     with _timed_edit_stage(timing, "canvas_dimensions"):
-        canvas_width, canvas_height = _project_canvas_dimensions(project, grid_size, padding)
+        canvas_width, canvas_height = _project_canvas_dimensions(
+            project, grid_size, resolved_padding
+        )
     dungeon_map = _edited_map(project, TEMPLATE_APPEARANCE, timing)
     with _timed_edit_stage(timing, "svg_canvas_setup"):
         stream = skia.DynamicMemoryWStream()
         canvas = skia.SVGCanvas.Make(skia.Rect.MakeWH(canvas_width, canvas_height), stream)
         transform = skia.Matrix()
         transform.setScale(grid_size / CELL_SIZE, grid_size / CELL_SIZE)
-        transform.postTranslate(padding, padding)
+        transform.postTranslate(resolved_padding, resolved_padding)
     with _timed_edit_stage(timing, "map_render"):
         dungeon_map.render(canvas, transform, timing=timing, fast_crosshatch=True)
     with _timed_edit_stage(timing, "room_numbers"):
@@ -1067,13 +1104,15 @@ def render_project_jpeg(value: Any, quality: int = 92) -> bytes:
     project = normalize_project(value)
     if project["layout"] is None or project["structure"] is None:
         raise ProjectValidationError("emptyProject")
-    canvas_width, canvas_height = _project_canvas_dimensions(project)
+    grid_size = DEFAULT_GRID_SIZE
+    padding = _resolve_canvas_padding(grid_size, None)
+    canvas_width, canvas_height = _project_canvas_dimensions(project, grid_size, padding)
     dungeon_map = _edited_map(project, project["appearance"])
     surface = skia.Surface(canvas_width, canvas_height)
     canvas = surface.getCanvas()
     transform = skia.Matrix()
-    transform.setScale(1.0, 1.0)
-    transform.postTranslate(128, 128)
+    transform.setScale(grid_size / CELL_SIZE, grid_size / CELL_SIZE)
+    transform.postTranslate(padding, padding)
     dungeon_map.render(canvas, transform)
     _draw_structure_numbers(canvas, project, transform, project["appearance"])
     data = surface.makeImageSnapshot().encodeToData(skia.kJPEG, quality)

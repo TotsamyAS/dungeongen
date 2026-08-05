@@ -1,4 +1,5 @@
 import random
+from dungeongen.constants import CELL_SIZE
 from dungeongen.graphics.rotation import Rotation
 from dungeongen.map.mapelement import MapElement
 from dungeongen.map._props.altar import Altar
@@ -25,8 +26,8 @@ def arrange_random_props(elem: MapElement, prop_types: list[PropType], min_count
     """
     # Calculate room area in grid cells
     bounds = elem.bounds
-    grid_width = bounds.width / 64  # Convert from pixels to grid cells
-    grid_height = bounds.height / 64
+    grid_width = bounds.width / CELL_SIZE  # Convert from pixels to grid cells
+    grid_height = bounds.height / CELL_SIZE
     area = grid_width * grid_height
     
     # Scale prop counts based on area relative to BASE_AREA

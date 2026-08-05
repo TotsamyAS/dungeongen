@@ -1,13 +1,13 @@
 const fallbackLocale = 'ru';
-const editorAssetVersion = '20260804-1';
+const editorAssetVersion = '20260805-1';
 const defaultColorApplyDelayMs = 350;
 const defaultCanonicalRenderDelayMs = 10000;
 const defaultPreviewSizePixels = 48;
 const defaultWorkingCopyIdleSaveMs = 15000;
 const defaultWorkingCopyIntervalMs = 300000;
 const defaultThemeSaveTimeoutMs = 20000;
-const cellSize = 64;
-const canvasPadding = cellSize * 2;
+const defaultCellSize = 60;
+const defaultCanvasPaddingCells = 2;
 const maxHistoryEntries = 20;
 const structureTools = new Set(['wall', 'corridor', 'roundRoom', 'roomClass']);
 const propTools = new Set([
@@ -68,6 +68,8 @@ let redoStack = [];
 let pendingAppearanceSnapshot = null;
 let appearanceUpdateTimer = null;
 let canonicalRenderTimer = null;
+let cellSize = defaultCellSize;
+let canvasPadding = cellSize * defaultCanvasPaddingCells;
 let colorApplyDelayMs = defaultColorApplyDelayMs;
 let canonicalRenderDelayMs = defaultCanonicalRenderDelayMs;
 let previewSizePixels = defaultPreviewSizePixels;
@@ -543,6 +545,15 @@ async function loadEditorConfig() {
 		const response = await fetch(`/dungeon-editor/config.json?v=${editorAssetVersion}`, { cache: 'no-store' });
 		if (!response.ok) return;
 		const config = await response.json();
+		const configuredCellSize = Number(config?.gridSizePixels);
+		const configuredPaddingCells = Number(config?.canvasPaddingCells);
+		if (Number.isInteger(configuredCellSize) && configuredCellSize > 0) {
+			cellSize = configuredCellSize;
+		}
+		const paddingCells = Number.isInteger(configuredPaddingCells) && configuredPaddingCells >= 0
+			? configuredPaddingCells
+			: defaultCanvasPaddingCells;
+		canvasPadding = cellSize * paddingCells;
 		const delay = Number(config?.colorApplyDelayMs);
 		if (Number.isFinite(delay)) colorApplyDelayMs = Math.max(0, Math.min(5000, Math.round(delay)));
 		const renderDelay = Number(config?.canonicalRenderDelayMs);

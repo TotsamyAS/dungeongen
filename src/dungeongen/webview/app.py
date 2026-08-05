@@ -16,6 +16,8 @@ from typing import Any
 from flask import Flask, Response, jsonify, redirect, request, send_from_directory
 
 from .project import (
+    CANVAS_PADDING_CELLS,
+    DEFAULT_GRID_SIZE,
     MAX_PROJECT_BYTES,
     ProjectValidationError,
     default_project,
@@ -95,6 +97,8 @@ def _public_editor_config() -> dict[str, int | bool]:
         "workingCopyIdleSaveMs": max(1000, min(300_000, int(raw_idle_save))),
         "workingCopyIntervalMs": max(10_000, min(1_800_000, int(raw_interval_save))),
         "themeSaveTimeoutMs": max(5_000, min(120_000, int(raw_theme_save_timeout))),
+        "gridSizePixels": DEFAULT_GRID_SIZE,
+        "canvasPaddingCells": CANVAS_PADDING_CELLS,
         "editTimeLogging": _logging_enabled(value, "EDIT_TIME_LOGGING"),
         "themeSaveLogging": _logging_enabled(value, "THEME_SAVE_LOGGING"),
     }

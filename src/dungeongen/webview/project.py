@@ -49,6 +49,7 @@ from .editing import (
     structure_floor_from_layout,
 )
 from .project_types import ProjectValidationError
+from .spawn_data import refresh_spawn_data
 
 PROJECT_FORMAT_VERSION = 1
 MAX_PROJECT_BYTES = 8 * 1024 * 1024
@@ -213,6 +214,7 @@ def default_project() -> dict[str, Any]:
         "renderSvg": None,
         "layout": None,
         "structure": None,
+        "spawnData": None,
         "stats": None,
         "generatedAt": None,
     }
@@ -262,6 +264,7 @@ def normalize_project(value: Any) -> dict[str, Any]:
         raise ProjectValidationError("invalidProject")
     project["layout"] = layout
     project["structure"] = normalize_structure(value.get("structure"), layout)
+    refresh_spawn_data(project)
     project["stats"] = stats
     project["generatedAt"] = value.get("generatedAt") if isinstance(value.get("generatedAt"), str) else None
     project["generatorVersion"] = (
@@ -999,6 +1002,7 @@ def generate_project(value: Any, *, render_svg: bool = True) -> dict[str, Any]:
         "generatedAt": datetime.now(timezone.utc).isoformat(),
     }
     materialize_project_objects(project)
+    refresh_spawn_data(project)
     if render_svg:
         project["renderSvg"] = render_project_svg(project)
         project["structure"]["renderedFloorCells"] = project["structure"]["floorCells"]
@@ -1034,6 +1038,7 @@ def edit_project(
             )
     project["structure"] = structure
     project["layout"] = layout
+    refresh_spawn_data(project)
     with _timed_edit_stage(timing, "stats_update"):
         project["stats"] = {
             **(project["stats"] or {}),

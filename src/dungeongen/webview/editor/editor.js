@@ -1,5 +1,5 @@
 const fallbackLocale = 'ru';
-const editorAssetVersion = '20260805-2';
+const editorAssetVersion = '20260810-2';
 const defaultColorApplyDelayMs = 350;
 const defaultCanonicalRenderDelayMs = 10000;
 const defaultPreviewSizePixels = 48;
@@ -27,6 +27,9 @@ const layoutObjectDefinitions = {
 };
 const editingTools = new Set([...structureTools, ...propTools, ...layoutTools, 'waterBrush', 'eraser']);
 const rotatableTools = new Set([...propTools, ...layoutTools]);
+const spawnNpcSizes = [1, 2, 3, 4];
+const nonBlockingSpawnDecorTypes = new Set(['dais']);
+const isNonBlockingSpawnDecor = (type) => nonBlockingSpawnDecorTypes.has(type) || type.startsWith('rock_');
 const fastModeStorageKey = 'dungeongen-fast-mode';
 const defaultAppearance = {
 	background: '#ffffff', shading: '#d0d2d5', floor: '#ffffff', shadow: '#d0d0d0',
@@ -106,6 +109,7 @@ let paletteMenuOpen = false;
 let editPreviewFrame = 0;
 let queuedEditPreview = null;
 let placementObjectId = '';
+let spawnOverlayVisible = false;
 let renameProjectCandidate = null;
 let lastHostStatusCode = '';
 let toastTimer = 0;
@@ -134,6 +138,7 @@ const elements = {
 	mapImage: document.getElementById('mapImage'),
 	mapImageBuffer: document.getElementById('mapImageBuffer'),
 	structureOverlay: document.getElementById('structureOverlay'),
+	spawnOverlay: document.getElementById('spawnOverlay'),
 	editOverlay: document.getElementById('editOverlay'),
 	emptyWorkspace: document.getElementById('emptyWorkspace'),
 	loading: document.getElementById('loading'),
@@ -162,6 +167,10 @@ const elements = {
 	editToolHint: document.getElementById('editToolHint'),
 	editAreaShortcut: document.getElementById('editAreaShortcut'),
 	stats: document.getElementById('stats'),
+	spawnNpcSize: document.getElementById('spawnNpcSize'),
+	spawnSummary: document.getElementById('spawnSummary'),
+	spawnOverlayToggle: document.getElementById('spawnOverlayToggle'),
+	spawnDownload: document.getElementById('spawnDownload'),
 	sourceLink: document.getElementById('sourceLink'),
 	supportEmailLink: document.getElementById('supportEmailLink'),
 	supportEmailText: document.getElementById('supportEmailText'),
@@ -626,8 +635,8 @@ function applyLabels() {
 		element.setAttribute('aria-label', t(element.dataset.labelAria));
 	});
 	const toolLabels = {
-		projects: 'toolProjects', generation: 'toolGeneration', editing: 'toolEditing', colors: 'toolColors',
-		export: 'toolExport', settings: 'toolSettings', support: 'toolSupport', about: 'toolAbout'
+		projects: 'toolProjects', generation: 'toolGeneration', editing: 'toolEditing', spawn: 'toolSpawn',
+		colors: 'toolColors', export: 'toolExport', settings: 'toolSettings', support: 'toolSupport', about: 'toolAbout'
 	};
 	document.querySelectorAll('[data-tool-button]').forEach((button) => {
 		const text = t(toolLabels[button.dataset.toolButton]);
@@ -1040,6 +1049,7 @@ function cloneProject(project = currentProject) {
 
 function compactProject(project = currentProject) {
 	if (!project) return null;
+	refreshProjectSpawnData(project);
 	const compact = { ...cloneProject(project), renderSvg: null };
 	if (compact.structure) delete compact.structure.renderedFloorCells;
 	return compact;
@@ -1242,6 +1252,7 @@ function renderAll() {
 	renderStats();
 	renderStructureOverlay();
 	renderWorkspace();
+	renderSpawnDiagnostics();
 }
 
 function renderStorage() {
@@ -1745,6 +1756,7 @@ function renderDecorationCommitState(operation) {
 	elements.undoEdit.disabled = !undoStack.length || generating || editing;
 	elements.redoEdit.disabled = !redoStack.length || generating || editing;
 	renderStats();
+	renderSpawnDiagnostics();
 }
 
 function renderWorkspace() {
@@ -1886,6 +1898,7 @@ function syncEditOverlaySize() {
 	elements.mapSurface.style.width = `${width}px`;
 	elements.mapSurface.style.height = `${height}px`;
 	elements.structureOverlay.setAttribute('viewBox', `0 0 ${width} ${height}`);
+	elements.spawnOverlay.setAttribute('viewBox', `0 0 ${width} ${height}`);
 	elements.editOverlay.setAttribute('viewBox', `0 0 ${width} ${height}`);
 }
 
@@ -1913,6 +1926,196 @@ function cellKey(cell) {
 
 function keyCell(key) {
 	return key.split(',').map(Number);
+}
+
+
+function spawnCellSet(values) {
+	const result = new Set();
+	for (const value of Array.isArray(values) ? values : []) {
+		if (!Array.isArray(value) || value.length !== 2) continue;
+		if (!Number.isInteger(value[0]) || !Number.isInteger(value[1])) continue;
+		result.add(cellKey(value));
+	}
+	return result;
+}
+
+function buildProjectSpawnData(project = currentProject) {
+	const structure = project?.structure;
+	const mapBounds = structure?.mapBounds;
+	if (!structure || !Array.isArray(mapBounds) || mapBounds.length !== 4 || !mapBounds.every(Number.isInteger)) return null;
+	const [minX, minY, maxX, maxY] = mapBounds;
+	const cols = maxX - minX;
+	const rows = maxY - minY;
+	if (cols <= 0 || rows <= 0) return null;
+
+	const floor = spawnCellSet(structure.floorCells);
+	const decorReasons = new Map();
+	const blockers = [];
+	for (let index = 0; index < (structure.objects ?? []).length; index += 1) {
+		const object = structure.objects[index];
+		if (!object || typeof object.type !== 'string' || isNonBlockingSpawnDecor(object.type)) continue;
+		const cells = [...spawnCellSet(object.cells)].map(keyCell).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+		if (!cells.length) continue;
+		const reason = `decor:${object.type}`;
+		for (const cell of cells) {
+			const key = cellKey(cell);
+			if (!decorReasons.has(key)) decorReasons.set(key, new Set());
+			decorReasons.get(key).add(reason);
+		}
+		blockers.push({
+			id: index + 1,
+			source: object.source === 'generated' || object.source === 'manual' ? object.source : 'decor',
+			reason,
+			shape: 'cells',
+			objectId: String(object.id ?? ''),
+			objectType: object.type,
+			cells
+		});
+	}
+
+	function analyze(col, row, size) {
+		if (col < 0 || row < 0 || col + size > cols || row + size > rows) return { allowed: false, reasons: ['map-edge'] };
+		const reasons = new Set();
+		for (let localY = row; localY < row + size; localY += 1) {
+			for (let localX = col; localX < col + size; localX += 1) {
+				const key = cellKey([minX + localX, minY + localY]);
+				if (!floor.has(key)) reasons.add('not-floor');
+				for (const reason of decorReasons.get(key) ?? []) reasons.add(reason);
+			}
+		}
+		const ordered = [...reasons].sort();
+		return { allowed: ordered.length === 0, reasons: ordered };
+	}
+
+	const totalCount = cols * rows;
+	const bySize = {};
+	for (const size of spawnNpcSizes) {
+		const anchors = [];
+		let allowedCount = 0;
+		for (let row = 0; row < rows; row += 1) {
+			for (let col = 0; col < cols; col += 1) {
+				const result = analyze(col, row, size);
+				if (result.allowed) allowedCount += 1;
+				anchors.push({ col, row, allowed: result.allowed, reasons: result.reasons });
+			}
+		}
+		bySize[String(size)] = { sizeCells: size, allowedCount, totalCount, anchors };
+	}
+
+	const cells = [];
+	for (let row = 0; row < rows; row += 1) {
+		for (let col = 0; col < cols; col += 1) {
+			const index = row * cols + col;
+			let maxNpcSizeCells = 0;
+			for (const size of spawnNpcSizes) {
+				if (bySize[String(size)].anchors[index]?.allowed) maxNpcSizeCells = size;
+			}
+			const base = bySize['1'].anchors[index];
+			cells.push({ col, row, spawnable: Boolean(base?.allowed), reasons: base?.reasons ?? [], maxNpcSizeCells });
+		}
+	}
+
+	const waterCells = [...spawnCellSet(structure.waterCells)].map(keyCell).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+	const seed = project?.parameters?.seed ?? project?.layout?.seed ?? '';
+	return {
+		version: 2,
+		seed: seed == null ? '' : String(seed),
+		biome: 'underdark',
+		blockers,
+		water: {
+			features: waterCells.length ? [{ id: 'dungeongen-water', kind: 'cells', source: 'structure', width: 0, points: [], cells: waterCells }] : [],
+			terrainPolygons: []
+		},
+		road: null,
+		grid: { type: 'square', cols, rows, cellSizePx: defaultCellSize, cellSizeFeet: 5, anchorCount: totalCount },
+		semantics: {
+			anchor: 'top-left',
+			footprint: 'square-cells',
+			sizesCells: [...spawnNpcSizes],
+			waterBlocksSpawn: false,
+			note: 'For size 2x2 and larger, each anchor cell is the top-left cell of the square NPC footprint.'
+		},
+		cells,
+		bySize
+	};
+}
+
+function refreshProjectSpawnData(project = currentProject) {
+	if (!project) return null;
+	const spawnData = buildProjectSpawnData(project);
+	project.spawnData = spawnData;
+	return spawnData;
+}
+
+function selectedSpawnNpcSize() {
+	const requested = Number(elements.spawnNpcSize?.value ?? 1);
+	return spawnNpcSizes.includes(requested) ? requested : 1;
+}
+
+function renderSpawnOverlay() {
+	elements.spawnOverlay.replaceChildren();
+	if (!spawnOverlayVisible || !currentProject?.spawnData || !currentProject?.structure?.mapBounds) return;
+	const size = String(selectedSpawnNpcSize());
+	const anchors = currentProject.spawnData.bySize?.[size]?.anchors ?? [];
+	const [minX, minY] = currentProject.structure.mapBounds;
+	const allowed = [];
+	const blocked = [];
+	for (const anchor of anchors) {
+		const target = anchor.allowed ? allowed : blocked;
+		target.push([minX + anchor.col, minY + anchor.row]);
+	}
+	for (const [cells, className] of [[blocked, 'spawn-blocked'], [allowed, 'spawn-allowed']]) {
+		if (!cells.length) continue;
+		const path = svgElement('path', { d: cellsPath(cells, currentProject.structure.mapBounds), class: `spawn-cell ${className}` });
+		elements.spawnOverlay.append(path);
+	}
+}
+
+function renderSpawnDiagnostics() {
+	const data = currentProject?.spawnData ?? (currentProject ? refreshProjectSpawnData(currentProject) : null);
+	const enabled = Boolean(data);
+	if (elements.spawnNpcSize) {
+		elements.spawnNpcSize.disabled = !enabled;
+		const appSelect = appSelectInstances.get(elements.spawnNpcSize);
+		if (appSelect) syncAppSelect(appSelect);
+	}
+	if (elements.spawnOverlayToggle) elements.spawnOverlayToggle.disabled = !enabled;
+	if (elements.spawnDownload) elements.spawnDownload.disabled = !enabled;
+	if (!enabled) {
+		if (elements.spawnSummary) elements.spawnSummary.textContent = t('spawnNoData');
+		if (elements.spawnOverlayToggle) {
+			elements.spawnOverlayToggle.textContent = t('spawnShow');
+			elements.spawnOverlayToggle.classList.remove('active');
+		}
+		elements.spawnOverlay.replaceChildren();
+		return;
+	}
+	const size = String(selectedSpawnNpcSize());
+	const stat = data.bySize?.[size];
+	const total = stat?.totalCount ?? data.grid?.anchorCount ?? 0;
+	const percent = stat ? Math.round((stat.allowedCount / Math.max(1, total)) * 100) : 0;
+	elements.spawnSummary.textContent = stat
+		? t('spawnAvailable', { size, count: stat.allowedCount, total, percent })
+		: t('spawnNoData');
+	elements.spawnOverlayToggle.textContent = t(spawnOverlayVisible ? 'spawnHide' : 'spawnShow');
+	elements.spawnOverlayToggle.classList.toggle('active', spawnOverlayVisible);
+	renderSpawnOverlay();
+}
+
+function downloadSpawnData() {
+	const data = refreshProjectSpawnData(currentProject);
+	if (!data) return;
+	const json = JSON.stringify(data, null, 2);
+	const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+	const url = URL.createObjectURL(blob);
+	const safeSeed = String(data.seed || 'map').replace(/[^a-z0-9_-]+/gi, '-').slice(0, 60);
+	const anchor = document.createElement('a');
+	anchor.href = url;
+	anchor.download = `${data.biome}-${safeSeed}-spawn.json`;
+	document.body.append(anchor);
+	anchor.click();
+	anchor.remove();
+	setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function lineCells(start, end) {
@@ -2768,6 +2971,7 @@ async function restoreHistory(nextProject, destination) {
 	if (destination.length > maxHistoryEntries) destination.shift();
 	const nextClientRevision = Number(currentProject?.clientRevision ?? 0) + 1;
 	currentProject = { ...cloneProject(nextProject), clientRevision: nextClientRevision };
+	refreshProjectSpawnData(currentProject);
 	refreshPendingDecorationObjects();
 	writeParameters(currentProject.parameters);
 	writeAppearance(currentProject.appearance);
@@ -2806,6 +3010,7 @@ async function commitStructure(operation) {
 		renderAll();
 		return;
 	}
+	refreshProjectSpawnData(next);
 	currentProject = next;
 	if (decorationOperation) reusePlacementIndexAfterDecoration(previous, next);
 	if (operation.type === 'toggleRoom' && Array.isArray(operation.cell)) pendingClassificationCells.add(cellKey(operation.cell));
@@ -3018,6 +3223,7 @@ async function openProject(message) {
 		refreshPendingDecorationObjects();
 		setLoadingProgress(68);
 		currentProject.appearance = normalizeAppearance(currentProject.appearance);
+		refreshProjectSpawnData(currentProject);
 		writeParameters(currentProject.parameters);
 		writeAppearance(currentProject.appearance);
 		setProjectImage(currentProject.renderSvg);
@@ -3073,6 +3279,17 @@ function activateTool(name) {
 document.querySelectorAll('[data-tool-button]').forEach((button) => {
 	button.addEventListener('click', () => activateTool(button.dataset.toolButton));
 });
+
+if (elements.spawnNpcSize) {
+	elements.spawnNpcSize.addEventListener('change', () => renderSpawnDiagnostics());
+}
+if (elements.spawnOverlayToggle) {
+	elements.spawnOverlayToggle.addEventListener('click', () => {
+		spawnOverlayVisible = !spawnOverlayVisible;
+		renderSpawnDiagnostics();
+	});
+}
+if (elements.spawnDownload) elements.spawnDownload.addEventListener('click', downloadSpawnData);
 document.querySelectorAll('[data-edit-tool]').forEach((button) => {
 	button.addEventListener('pointerenter', () => showEditToolTooltip(button));
 	button.addEventListener('pointerleave', () => hideEditToolTooltip(button));

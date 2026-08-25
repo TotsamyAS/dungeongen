@@ -1309,6 +1309,12 @@ function renderProjects() {
 
 		const actions = document.createElement('div');
 		actions.className = 'project-actions';
+		const print = document.createElement('button');
+		print.type = 'button';
+		print.className = 'ui-button icon-only project-print';
+		print.innerHTML = icon('printer');
+		setControlLabel(print, t('printProject'));
+		print.addEventListener('click', () => void printProject(project));
 		const rename = document.createElement('button');
 		rename.type = 'button';
 		rename.className = 'ui-button icon-only project-rename';
@@ -1325,7 +1331,7 @@ function renderProjects() {
 				send('dungeongen:project-delete', { projectId: project.id });
 			}
 		});
-		actions.append(rename, remove);
+		actions.append(print, rename, remove);
 		card.append(preview, open, actions);
 		elements.projectList.append(card);
 	}
@@ -3549,6 +3555,25 @@ async function exportCurrentProject() {
 		projectId,
 		projectData: compactProject(project),
 		previewBase64
+	});
+}
+
+async function printProject(project) {
+	if (project.id !== currentProjectId) {
+		send('dungeongen:print', { projectId: project.id, name: project.name, gridSizePixels: cellSize });
+		return;
+	}
+	if (!currentProject?.structure) return;
+	if (!await checkpointWorkingCopy()) return;
+	if (!await ensureCanonicalProject({ persistPreview: false })) return;
+	await elements.mapImage.decode().catch(() => undefined);
+	const previewBase64 = await makePreviewBase64();
+	send('dungeongen:print', {
+		projectId: currentProjectId,
+		name: project.name,
+		projectData: compactProject(currentProject),
+		previewBase64,
+		gridSizePixels: cellSize
 	});
 }
 

@@ -741,6 +741,7 @@ select {
 	gap: 6px;
 }
 
+.project-actions .project-print,
 .project-actions .project-rename,
 .project-actions .project-delete {
 	width: 32px;
@@ -751,10 +752,24 @@ select {
 	border-radius: 50%;
 }
 
+.project-actions .project-print svg,
 .project-actions .project-rename svg,
 .project-actions .project-delete svg {
 	width: 16px;
 	height: 16px;
+}
+
+.project-actions .project-print {
+	color: var(--gold);
+	border-color: color-mix(in srgb, var(--gold) 68%, transparent);
+	background: color-mix(in srgb, var(--gold) 14%, transparent);
+}
+
+.project-actions .project-print:hover,
+.project-actions .project-print:focus-visible {
+	color: var(--vellum);
+	border-color: var(--gold);
+	background: color-mix(in srgb, var(--gold) 24%, transparent);
 }
 
 .palette-selector {

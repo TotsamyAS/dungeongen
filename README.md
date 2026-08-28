@@ -87,17 +87,17 @@ The underlying Python package still contains the original map and drawing primit
 
 The parent application normally calls these routes through its own server-side gateway.
 
-| Method | Route | Purpose |
-| --- | --- | --- |
-| `GET` | `/health` | Container and service health check. |
-| `GET` | `/dungeon-editor` | Service-owned embedded editor. |
-| `POST` | `/internal/capabilities` | Mint a short-lived capability token for trusted host-to-service use. |
-| `POST` | `/api/dungeongen/projects/default` | Create an empty normalized project document. |
-| `POST` | `/api/dungeongen/editor/generate` | Generate a project from editor parameters. |
-| `POST` | `/api/dungeongen/editor/edit` | Apply one structural or object editing operation. |
-| `POST` | `/api/dungeongen/editor/checkpoint` | Normalize and checkpoint an edited project without a full render. |
-| `POST` | `/api/dungeongen/editor/render` | Produce the canonical rendered project after edits. |
-| `POST` | `/api/dungeongen/projects/export` | Render a project as `image/jpeg`. |
+| Method | Route                               | Purpose                                                              |
+| ------ | ----------------------------------- | -------------------------------------------------------------------- |
+| `GET`  | `/health`                           | Container and service health check.                                  |
+| `GET`  | `/dungeon-editor`                   | Service-owned embedded editor.                                       |
+| `POST` | `/internal/capabilities`            | Mint a short-lived capability token for trusted host-to-service use. |
+| `POST` | `/api/dungeongen/projects/default`  | Create an empty normalized project document.                         |
+| `POST` | `/api/dungeongen/editor/generate`   | Generate a project from editor parameters.                           |
+| `POST` | `/api/dungeongen/editor/edit`       | Apply one structural or object editing operation.                    |
+| `POST` | `/api/dungeongen/editor/checkpoint` | Normalize and checkpoint an edited project without a full render.    |
+| `POST` | `/api/dungeongen/editor/render`     | Produce the canonical rendered project after edits.                  |
+| `POST` | `/api/dungeongen/projects/export`   | Render a project as `image/jpeg`.                                    |
 
 The editor mutation routes require the capability token in the `X-Dungeongen-Capability` header. `/internal/capabilities` is intended for an internal network and should not be exposed directly to untrusted clients.
 
@@ -121,21 +121,21 @@ Runtime settings are read from `config.json` in the package root or current work
 
 ```json
 {
-  "port": 5050,
-  "workers": 2,
-  "threads": 2,
-  "requestTimeoutSeconds": 180,
-  "colorApplyDelayMs": 200,
-  "canonicalRenderDelayMs": 10,
-  "workingCopyIdleSaveMs": 15000,
-  "workingCopyIntervalMs": 300000,
-  "previewSizePixels": 48,
-  "themeSaveTimeoutMs": 20000,
-  "logging": {
-    "EDITING_LOGGING": false,
-    "EDIT_TIME_LOGGING": true,
-    "THEME_SAVE_LOGGING": false
-  }
+	"port": 5050,
+	"workers": 2,
+	"threads": 2,
+	"requestTimeoutSeconds": 180,
+	"colorApplyDelayMs": 200,
+	"canonicalRenderDelayMs": 10,
+	"workingCopyIdleSaveMs": 15000,
+	"workingCopyIntervalMs": 300000,
+	"previewSizePixels": 48,
+	"themeSaveTimeoutMs": 20000,
+	"logging": {
+		"EDITING_LOGGING": false,
+		"EDIT_TIME_LOGGING": true,
+		"THEME_SAVE_LOGGING": false
+	}
 }
 ```
 

@@ -66,6 +66,7 @@ src/dungeongen/
 ### 1. Separation of Concerns
 
 The layout system knows nothing about rendering. It produces abstract data structures:
+
 - Rooms with grid coordinates and dimensions
 - Passages as lists of waypoints
 - Doors, stairs, and exits with positions and types
@@ -81,11 +82,13 @@ The map system converts grid coordinates to pixel coordinates using `CELL_SIZE` 
 ### 3. Connection Chains and Regions
 
 Map elements connect in chains that define traversal:
+
 ```
 Room → Door → Passage → Door → Room
 ```
 
 **Regions** group connected elements that aren't separated by closed doors. A region contains:
+
 - A combined `Shape` (union of all element shapes)
 - References to the contained `MapElement` instances
 
@@ -96,6 +99,7 @@ class Region:
 ```
 
 Regions are used for:
+
 - **Crosshatch clipping** - The crosshatch pattern is clipped to the inflated union of all region shapes
 - **Water clipping** - Water is clipped to stay within floor areas
 - **Flood-fill rendering** - All elements in a region share the same fill pass
@@ -115,6 +119,7 @@ class Layers(Enum):
 ```
 
 The full render order:
+
 1. **Crosshatch background** - The dungeon "walls"
 2. **Room shadows** (`Layers.SHADOW`) - Drop shadows for depth
 3. **Room fills** - The floor areas
@@ -132,20 +137,23 @@ Each `MapElement.draw(canvas, layer)` is called once per layer, allowing props t
 ### Layout System
 
 **`DungeonGenerator`** - Main entry point for layout generation
+
 - Takes `GenerationParams` to configure size, symmetry, archetype
 - Uses recursive branching with spatial hashing for collision detection
 - Supports symmetry modes: bilateral (mirror); radial modes planned for future
 - Implements "Jaquaying" - adding loops and alternate paths
 
 **`Dungeon`** - Output data structure
+
 - Contains rooms, passages, doors, stairs, exits
 - Stores mirror pairs for symmetric layouts
 - Includes bounds and metadata
 
 **`GenerationParams`** - Configuration dataclass
+
 - `size`: TINY through XLARGE (affects room count)
-- `symmetry`: NONE, BILATERAL, RADIAL_2 *(future)*, RADIAL_4 *(future)*
-- `archetype`: CLASSIC, WARREN, TEMPLE, CRYPT, LAIR *(partially implemented - see note)*
+- `symmetry`: NONE, BILATERAL, RADIAL_2 _(future)_, RADIAL_4 _(future)_
+- `archetype`: CLASSIC, WARREN, TEMPLE, CRYPT, LAIR _(partially implemented - see note)_
 - `density`: Controls room spacing (sparse to tight)
 
 > **Note on Archetypes**: Currently only LAIR (tags largest room) and TEMPLE (tags central room) have effects. Other archetypes are defined but do not modify generation. Use `density`, `room_size_bias`, and `loop_factor` manually to achieve different dungeon styles.
@@ -153,6 +161,7 @@ Each `MapElement.draw(canvas, layer)` is called once per layer, allowing props t
 ### Map System
 
 **`Map`** - Main renderer and element container
+
 - Holds all `MapElement` instances (rooms, passages, doors, exits)
 - Manages occupancy grid for prop placement
 - Handles water layer generation
@@ -160,6 +169,7 @@ Each `MapElement.draw(canvas, layer)` is called once per layer, allowing props t
 - `render_to_png(filename)` / `render_to_svg(filename)` - Convenience methods
 
 **`MapElement`** - Base class for all renderable elements
+
 - Rooms, passages, doors, exits all inherit from this
 - Has a `Shape` defining its geometry
 - Maintains bidirectional connections to other elements
@@ -167,21 +177,25 @@ Each `MapElement.draw(canvas, layer)` is called once per layer, allowing props t
 - Provides `draw(canvas, layer)` method called per rendering layer
 
 **`Region`** - Group of connected elements
+
 - Represents a contiguous area not separated by closed doors
 - Contains combined `Shape` of all elements for flood-fill rendering
 - Used to clip crosshatch and water to open areas
 
 **`Room`** - Renderable room
+
 - Rectangular or circular shape
 - Draws numbered label
 - Contains props (columns, altars, etc.)
 
 **`Passage`** - Renderable corridor
+
 - Defined by grid waypoints
 - Handles turns and variable widths
 - Can contain stairs props
 
 **`Options`** - Rendering configuration
+
 - Colors for backgrounds, shadows, borders
 - Stroke widths and spacing
 - Grid style and appearance
@@ -189,6 +203,7 @@ Each `MapElement.draw(canvas, layer)` is called once per layer, allowing props t
 ### Adapter
 
 **`convert_dungeon(layout_dungeon, water_depth=0.0) → Map`**
+
 - Converts layout output to renderable Map
 - Handles coordinate normalization
 - Splits crossing passages into segments
@@ -214,12 +229,14 @@ class CellType(IntEnum):
 ### Why RESERVED and BLOCKED?
 
 **RESERVED cells** form a 1-cell buffer around rooms. They serve two purposes:
+
 1. **Spacing** - Prevents rooms from touching directly
 2. **Passage routing constraints** - Passages can cross ONE reserved cell (to connect to a room) but not run along the margin (which would hug the wall)
 
 The pattern `RR` (two reserved cells in a row) is invalid for passages longer than 2 cells. This prevents corridors from running parallel to room walls.
 
 **BLOCKED cells** mark positions that should never have passages:
+
 1. **Room corners** - Passages connecting at corners look bad visually
 2. **Round room exit adjacents** - For circular rooms, the cells beside each cardinal exit point are blocked to force passages to connect at clean angles
 
@@ -251,7 +268,8 @@ Passages with `DOOR` or `STAIRS` modifiers are blocking - other passages cannot 
 
 ### Pathfinding Rules
 
-When finding routes for new passages, the A* pathfinder enforces:
+When finding routes for new passages, the A\* pathfinder enforces:
+
 - No `ROOM` cells (can't go through rooms)
 - No `BLOCKED` cells (corners, exit adjacents)
 - No `DOOR` cells (existing doors are blocking)
@@ -355,7 +373,7 @@ MY_PROP_TYPE = PropType(
 class MyProp(Prop):
     def __init__(self, position: Point, rotation: Rotation = Rotation.ROT_0):
         super().__init__(MY_PROP_TYPE, position, rotation)
-    
+
     def _draw_content(self, canvas: skia.Canvas, bounds: Rectangle, layer: Layers):
         """Draw prop content in local coordinates (origin at center, facing right)."""
         if layer == Layers.SHADOW:
@@ -368,7 +386,7 @@ class MyProp(Prop):
             shadow_paint = skia.Paint(Color=self.options.room_shadow_color)
             # ... draw shadow shape ...
             canvas.restore()
-            
+
         elif layer == Layers.PROPS:
             # Draw main content
             fill_paint = skia.Paint(Color=self.options.prop_light_color)
@@ -415,6 +433,7 @@ The `Rotation` enum provides: `ROT_0`, `ROT_90`, `ROT_180`, `ROT_270`.
 ## Code Style Guide
 
 ### Naming Conventions
+
 - Classes: `PascalCase`
 - Functions/methods: `snake_case`
 - Constants: `UPPER_SNAKE_CASE`
@@ -422,17 +441,20 @@ The `Rotation` enum provides: `ROT_0`, `ROT_90`, `ROT_180`, `ROT_270`.
 - Type hints required for public APIs
 
 ### Architecture Rules
+
 - Layout system must not import from map system
 - Map system receives layout data via adapter
 - Graphics primitives are shared utilities
 - Props are self-contained with their own rendering
 
 ### Documentation
+
 - All public classes need docstrings
 - Complex algorithms need inline comments
 - Type hints serve as documentation
 
 ### Testing
+
 - Tests live in `/tests/`
 - Use pytest
 - Test layout generation determinism (same seed = same output)
@@ -448,4 +470,3 @@ The `Rotation` enum provides: `ROT_0`, `ROT_90`, `ROT_180`, `ROT_270`.
 ## Inspiration
 
 This project was inspired by [watabou's One Page Dungeon](https://watabou.itch.io/one-page-dungeon) generator. The hand-drawn crosshatch aesthetic and procedural generation concepts draw from that work, though this is a complete Python rewrite with original algorithms.
-

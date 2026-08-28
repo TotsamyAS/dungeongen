@@ -9,6 +9,7 @@ pip install dungeongen
 ```
 
 For development:
+
 ```bash
 git clone https://github.com/benjcooley/dungeongen.git
 cd dungeongen
@@ -57,12 +58,12 @@ dungeon_map.render_to_svg('my_dungeon.svg')
 
 Controls the number of rooms:
 
-| Size | Room Count |
-|------|------------|
-| `TINY` | 4-6 rooms |
-| `SMALL` | 6-10 rooms |
+| Size     | Room Count  |
+| -------- | ----------- |
+| `TINY`   | 4-6 rooms   |
+| `SMALL`  | 6-10 rooms  |
 | `MEDIUM` | 10-16 rooms |
-| `LARGE` | 16-24 rooms |
+| `LARGE`  | 16-24 rooms |
 | `XLARGE` | 24-40 rooms |
 
 ```python
@@ -71,12 +72,12 @@ params.size = DungeonSize.LARGE
 
 ### Symmetry Types
 
-| Type | Description |
-|------|-------------|
-| `NONE` | Asymmetric, organic layout |
-| `BILATERAL` | Mirror symmetry (left/right) |
-| `RADIAL_2` | 180° rotational symmetry *(future)* |
-| `RADIAL_4` | 90° rotational symmetry *(future)* |
+| Type        | Description                         |
+| ----------- | ----------------------------------- |
+| `NONE`      | Asymmetric, organic layout          |
+| `BILATERAL` | Mirror symmetry (left/right)        |
+| `RADIAL_2`  | 180° rotational symmetry _(future)_ |
+| `RADIAL_4`  | 90° rotational symmetry _(future)_  |
 
 ```python
 params.symmetry = SymmetryType.BILATERAL
@@ -86,11 +87,11 @@ params.symmetry = SymmetryType.BILATERAL
 
 > **Note**: Archetypes are currently **partially implemented**. They add semantic tags but don't change generation parameters. Use the manual parameters below to achieve different styles.
 
-| Archetype | Current Effect |
-|-----------|----------------|
-| `LAIR` | Tags largest room as 'lair'/'boss' |
-| `TEMPLE` | Tags central room as 'sanctum' |
-| `CLASSIC`, `WARREN`, `CRYPT`, `CAVERN`, `FORTRESS` | No effect (placeholder) |
+| Archetype                                          | Current Effect                     |
+| -------------------------------------------------- | ---------------------------------- |
+| `LAIR`                                             | Tags largest room as 'lair'/'boss' |
+| `TEMPLE`                                           | Tags central room as 'sanctum'     |
+| `CLASSIC`, `WARREN`, `CRYPT`, `CAVERN`, `FORTRESS` | No effect (placeholder)            |
 
 To achieve different dungeon styles, adjust parameters manually:
 
@@ -219,16 +220,16 @@ The web preview (`python -m dungeongen.webview.app`) provides an interactive UI:
 
 ### Controls
 
-| Control | Description |
-|---------|-------------|
-| **SIZE** | Tiny, Small, Med, Large |
-| **SYM** | None, Mirror |
-| **TYPE** | Classic, Warren, Temple, Crypt, Lair |
-| **CROSS** | Crosshatch density (No, Lo, Med, Hi) |
-| **PACK** | Room packing density (Sparse, Norm, Tight) |
-| **ROOMS** | Room size bias (Cozy, Mixed, Grand) |
+| Control   | Description                                       |
+| --------- | ------------------------------------------------- |
+| **SIZE**  | Tiny, Small, Med, Large                           |
+| **SYM**   | None, Mirror                                      |
+| **TYPE**  | Classic, Warren, Temple, Crypt, Lair              |
+| **CROSS** | Crosshatch density (No, Lo, Med, Hi)              |
+| **PACK**  | Room packing density (Sparse, Norm, Tight)        |
+| **ROOMS** | Room size bias (Cozy, Mixed, Grand)               |
 | **WATER** | Water depth (Dry, Puddles, Pools, Lakes, Flooded) |
-| **Seed** | Random seed (leave blank for random) |
+| **Seed**  | Random seed (leave blank for random)              |
 
 ### View Modes
 
@@ -239,6 +240,7 @@ The web preview (`python -m dungeongen.webview.app`) provides an interactive UI:
 ### Water Sliders
 
 When water is enabled, fine-tune with sliders:
+
 - **Scale**: Size of water bodies
 - **Resolution**: Quality vs speed tradeoff
 - **Stroke**: Shoreline thickness
@@ -318,4 +320,3 @@ for symmetry in [SymmetryType.NONE, SymmetryType.BILATERAL]:
 # Small thumbnails for previews
 dungeon_map.render_to_png('thumbnail.png', width=300, height=300)
 ```
-

@@ -5,6 +5,7 @@ This document explains how DungeonGen renders dungeon maps, including region gro
 ## Overview
 
 The rendering system transforms a layout `Dungeon` into a visual map with:
+
 - Crosshatch "wall" texture around rooms
 - Filled floor areas with shadows
 - Dot grid overlays
@@ -58,21 +59,21 @@ class Region:
 def _trace_connected_region(element, visited, region):
     if element in visited:
         return
-    
+
     visited.add(element)
     region.append(element)
-    
+
     for connection in element.connections:
         # Closed doors: add side shape, but don't traverse
         if isinstance(connection, Door) and not connection.open:
             region.append(connection.get_side_shape(element))
             continue
-        
+
         # Exits: add chip shape, terminal (no traversal)
         if isinstance(connection, Exit):
             region.append(connection.get_side_shape(element))
             continue
-        
+
         # Recurse into connected elements
         _trace_connected_region(connection, visited, region)
 ```
@@ -83,14 +84,14 @@ def _trace_connected_region(element, visited, region):
 def _make_regions(self):
     visited = set()
     regions = []
-    
+
     for element in self._elements:
         if element in visited or isinstance(element, Exit):
             continue
-        
+
         region_elements = []
         self._trace_connected_region(element, visited, region_elements)
-        
+
         if region_elements:
             # Collect shapes (inflated slightly for overlap)
             shapes = []
@@ -101,12 +102,12 @@ def _make_regions(self):
                     final_elements.append(item)
                 else:  # Side shape from door/exit
                     shapes.append(item)
-            
+
             regions.append(Region(
                 shape=ShapeGroup.combine(shapes),
                 elements=final_elements
             ))
-    
+
     return regions
 ```
 
@@ -224,12 +225,12 @@ if self.water_layer and self.water_layer.shapes:
     canvas.save()
     # Translate water to map coordinates
     canvas.translate(self.bounds.x, self.bounds.y)
-    
+
     water_style = WaterStyle(
         stroke_width=self._water_stroke_width,
         ripple_insets=(self._water_ripple_inset, self._water_ripple_inset * 2)
     )
-    
+
     # Draw using pre-recorded picture for speed
     self.water_layer.draw(canvas, style=water_style)
     canvas.restore()
@@ -279,19 +280,19 @@ Maps are rendered with a transform that scales and centers:
 ```python
 def calculate_fit_transform(self, canvas_width, canvas_height):
     bounds = self.bounds
-    
+
     # Padding in grid units
     padding_x, padding_y = grid_to_map(options.map_border_cells, options.map_border_cells)
-    
+
     # Scale to fit
     padded_width = bounds.width + (2 * padding_x)
     padded_height = bounds.height + (2 * padding_y)
     scale = min(canvas_width / padded_width, canvas_height / padded_height)
-    
+
     # Center
     translate_x = ((canvas_width - (bounds.width * scale)) / 2) - (bounds.x * scale)
     translate_y = ((canvas_height - (bounds.height * scale)) / 2) - (bounds.y * scale)
-    
+
     matrix = skia.Matrix()
     matrix.setScale(scale, scale)
     matrix.postTranslate(translate_x, translate_y)
@@ -303,12 +304,12 @@ The transform is applied once at the start of rendering:
 ```python
 def render(self, canvas, transform=None):
     matrix = transform or self.calculate_fit_transform(canvas_width, canvas_height)
-    
+
     canvas.save()
     canvas.concat(matrix)
-    
+
     # ... all drawing happens in map coordinates ...
-    
+
     canvas.restore()
 ```
 
@@ -324,12 +325,12 @@ def draw(self, canvas, layer):
         for prop in self._props:
             if prop.prop_type.is_decoration:
                 prop.draw(canvas, layer)
-        
+
         # Then non-decoration props
         for prop in self._props:
             if not prop.prop_type.is_decoration:
                 prop.draw(canvas, layer)
-    
+
     elif layer == Layers.SHADOW:
         # Only shadow for non-decoration props
         for prop in self._props:
@@ -348,7 +349,7 @@ def _draw_content(self, canvas, bounds, layer):
         canvas.translate(shadow_offset_x, shadow_offset_y)
         shadow_shape.draw(canvas, shadow_paint)
         canvas.restore()
-    
+
     elif layer == Layers.PROPS:
         # Draw fill and outline
         shape.draw(canvas, fill_paint)
@@ -363,61 +364,61 @@ def render(self, canvas, transform=None):
     matrix = transform or self.calculate_fit_transform(...)
     canvas.save()
     canvas.concat(matrix)
-    
+
     # 1. Background
     canvas.drawRect(full_canvas, background_paint)
-    
+
     # 2. Build regions and crosshatch shape
     regions = self._make_regions()
     crosshatch_shape = combine_inflated(regions)
-    
+
     # 3. Crosshatch background fill
     crosshatch_shape.draw(canvas, shading_paint)
-    
+
     # 4. Crosshatch pattern
     draw_crosshatches_tiled(canvas, crosshatch_shape, self.hatch_tile, options)
-    
+
     # 5. Render each region
     for region in regions:
         canvas.save()
         canvas.clipPath(region.shape.to_path())
-        
+
         # Shadow
         region.shape.draw(canvas, shadow_paint)
-        
+
         # Fill (offset)
         canvas.translate(shadow_offset)
         region.shape.draw(canvas, room_paint)
         canvas.restore()  # Remove offset
-        
+
         # Element shadows
         for element in region.elements:
             element.draw(canvas, Layers.SHADOW)
-        
+
         # Grid
         draw_region_grid(canvas, region, options)
-        
+
         # Water
         if water_layer:
             water_layer.draw(canvas, style)
-        
+
         # Props
         for element in region.elements:
             element.draw(canvas, Layers.PROPS)
-        
+
         canvas.restore()  # Remove clip
-    
+
     # 6. Borders (unified)
     canvas.drawPath(unified_border, border_paint)
-    
+
     # 7. Overlays (doors)
     for element in self._elements:
         element.draw(canvas, Layers.OVERLAY)
-    
+
     # 8. Text (room numbers)
     for element in self._elements:
         element.draw(canvas, Layers.TEXT)
-    
+
     canvas.restore()  # Remove transform
 ```
 
@@ -446,4 +447,3 @@ def render_to_svg(self, filename, width=1200, height=1200):
 ```
 
 Both formats use the same `render()` method - Skia handles the format-specific encoding.
-

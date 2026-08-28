@@ -58,7 +58,7 @@ MAX_ROOM_SIZE = 12
 class Map:
     def __init__(self):
         self._elements = []  # Private
-        
+
     def _calculate_bounds(self):  # Private method
         pass
 ```
@@ -101,17 +101,17 @@ Use Google-style docstrings:
 ```python
 def generate(self, seed: Optional[int] = None) -> Dungeon:
     """Generate a complete dungeon layout.
-    
+
     Creates rooms, passages, doors, and other elements based on
     the configured parameters.
-    
+
     Args:
         seed: Random seed for deterministic generation. If None,
             uses a random seed.
-    
+
     Returns:
         A Dungeon instance containing all generated elements.
-    
+
     Raises:
         ValueError: If parameters are invalid.
     """
@@ -137,6 +137,7 @@ Please read [ARCHITECTURE.md](ARCHITECTURE.md) before contributing. Key rules:
 ### Element Connections
 
 Map elements connect in chains:
+
 ```
 Room → Door → Passage → Door → Room
 ```
@@ -253,10 +254,10 @@ def test_dungeon_generation_deterministic():
     """Same seed should produce same dungeon."""
     params = GenerationParams()
     gen = DungeonGenerator(params)
-    
+
     d1 = gen.generate(seed=42)
     d2 = gen.generate(seed=42)
-    
+
     assert len(d1.rooms) == len(d2.rooms)
     for rid in d1.rooms:
         assert d1.rooms[rid].x == d2.rooms[rid].x
@@ -265,6 +266,7 @@ def test_dungeon_generation_deterministic():
 ### Visual Tests
 
 Some things need visual verification:
+
 - Rendering output
 - Water appearance
 - Prop placement
@@ -280,4 +282,3 @@ Run the web preview and check manually.
 ## License
 
 By contributing, you agree that your contributions will be licensed under the MIT License.
-

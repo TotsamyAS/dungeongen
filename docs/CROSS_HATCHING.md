@@ -37,15 +37,15 @@ Points are distributed using **Poisson disk sampling** with a minimum distance c
 
 ```python
 def _generate_wrapping_poisson_points(tile_size, min_distance, seed):
-    # Uses toroidal distance - points near edges consider 
+    # Uses toroidal distance - points near edges consider
     # wrapped neighbors from opposite edge
-    
+
     # Seed with multiple starting points for coverage
     for i in range(4):
         for j in range(4):
             # Grid of seed points with jitter
             ...
-    
+
     # Standard dart-throwing with toroidal distance check
     while spawn_points:
         # Pick random point, try to spawn neighbors
@@ -84,14 +84,14 @@ Each point generates a cluster of parallel strokes at its assigned angle.
 for i in range(strokes_per_cluster):  # Usually 4-6 strokes
     # Calculate offset perpendicular to base angle
     offset = (i - strokes_per_cluster // 2) * stroke_spacing
-    
+
     # Add length variation
     variation = random.uniform(-length_variation, length_variation)
-    
+
     # Create stroke endpoints
     dx = dx_base * (stroke_length / 2 + variation)
     dy = dy_base * (stroke_length / 2 + variation)
-    
+
     stroke = ((px + offset * dy_base - dx, py - offset * dx_base - dy),
               (px + offset * dy_base + dx, py - offset * dx_base + dy))
 ```
@@ -113,7 +113,7 @@ def _validate_stroke_against_mirrored(stroke, all_point_strokes, tile_size):
                     if intersection:
                         # Clip stroke at intersection
                         ...
-    
+
     # Discard if clipped too short
     if new_length < min_stroke_length:
         return None
@@ -166,9 +166,9 @@ def draw_crosshatches_tiled(canvas, shape, tile, options):
     # Create masks
     coarse_mask = rasterize_at_low_res(shape)
     full_mask = rasterize_at_full_res(shape)
-    
+
     path = skia.Path()
-    
+
     # For each tile position covering shape bounds:
     for tile_y in range(min_tile_y, max_tile_y + 1):
         for tile_x in range(min_tile_x, max_tile_x + 1):
@@ -176,17 +176,17 @@ def draw_crosshatches_tiled(canvas, shape, tile, options):
             for cell_y_idx in range(grid_cells):
                 for cell_x_idx in range(grid_cells):
                     coverage = sample_coarse_mask(cell_x, cell_y)
-                    
+
                     if coverage < 0.01:
                         continue  # Skip outside
-                    
+
                     for point_idx in cell_point_indices[(cell_x_idx, cell_y_idx)]:
                         if coverage > 0.99 or point_in_full_mask(point):
                             # Add all strokes for this point
                             for line in tile.point_lines[point_idx]:
                                 path.moveTo(...)
                                 path.lineTo(...)
-    
+
     canvas.drawPath(path, line_paint)
 ```
 
@@ -194,22 +194,23 @@ def draw_crosshatches_tiled(canvas, shape, tile, options):
 
 Key parameters in `Options`:
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `crosshatch_poisson_radius` | 60 | Min distance between cluster centers |
-| `crosshatch_stroke_length` | 55 | Base length of each stroke |
-| `crosshatch_stroke_spacing` | 8 | Distance between parallel strokes |
-| `crosshatch_strokes_per_cluster` | 4 | Strokes per cluster |
-| `crosshatch_stroke_width` | 1.5 | Line thickness |
-| `crosshatch_neighbor_radius` | 90 | Radius for angle neighbor check |
-| `crosshatch_angle_variation` | 0.4 | Angle adjustment when avoiding neighbors |
-| `crosshatch_length_variation` | 0.2 | Random length variation (±20%) |
-| `min_crosshatch_stroke_length` | 10 | Discard strokes shorter than this |
-| `crosshatch_border_size` | 24 | How far crosshatch extends beyond room edges |
+| Parameter                        | Default | Description                                  |
+| -------------------------------- | ------- | -------------------------------------------- |
+| `crosshatch_poisson_radius`      | 60      | Min distance between cluster centers         |
+| `crosshatch_stroke_length`       | 55      | Base length of each stroke                   |
+| `crosshatch_stroke_spacing`      | 8       | Distance between parallel strokes            |
+| `crosshatch_strokes_per_cluster` | 4       | Strokes per cluster                          |
+| `crosshatch_stroke_width`        | 1.5     | Line thickness                               |
+| `crosshatch_neighbor_radius`     | 90      | Radius for angle neighbor check              |
+| `crosshatch_angle_variation`     | 0.4     | Angle adjustment when avoiding neighbors     |
+| `crosshatch_length_variation`    | 0.2     | Random length variation (±20%)               |
+| `min_crosshatch_stroke_length`   | 10      | Discard strokes shorter than this            |
+| `crosshatch_border_size`         | 24      | How far crosshatch extends beyond room edges |
 
 ## Visual Effect
 
 The combination of:
+
 - **Poisson sampling** → Even but random distribution
 - **Angle variation** → Organic "hand-drawn" feel
 - **Intersection clipping** → Strokes don't overlap
@@ -223,4 +224,3 @@ Tile generation: ~50-100ms (once per session)
 Tile rendering: ~5-20ms per shape depending on size
 
 The tiled approach is 10-50x faster than regenerating strokes for each render.
-

@@ -40,6 +40,7 @@ Creates dungeons with left-right symmetry using a **spine-based** approach:
 ```
 
 The algorithm:
+
 1. Create a central **spine** of rooms going north-south
 2. At each spine room, branch left (west) and right (east)
 3. Left and right branches use the **same placement seed** for identical room sizes/shapes
@@ -49,13 +50,13 @@ The algorithm:
 def _generate_spine_with_context(dungeon, start_x, start_y, length, ctx, parent_room=None):
     for i in range(actual_length):
         room = create_spine_room()
-        
+
         # Position room adjacent to previous
         if ctx.is_tight and prev_room:
             place_room_adjacent(prev_room, direction, room)
         else:
             position_at_center(room, current_x, current_y)
-        
+
         # Branch perpendicular to spine direction
         if branch_chance < BRANCH_CHANCE:
             # LEFT branch
@@ -66,7 +67,7 @@ def _generate_spine_with_context(dungeon, start_x, start_y, length, ctx, parent_
                 termination_seed=left_term_seed  # Different
             )
             generate_spine_with_context(..., left_ctx, parent_room=room)
-            
+
             # RIGHT branch (mirrors left)
             right_ctx = ctx.clone(
                 direction='east',
@@ -76,11 +77,12 @@ def _generate_spine_with_context(dungeon, start_x, start_y, length, ctx, parent_
             generate_spine_with_context(..., right_ctx, parent_room=room)
 ```
 
-### Radial (2-fold and 4-fold) - *Future*
+### Radial (2-fold and 4-fold) - _Future_
 
 > **Note**: Radial symmetry modes are defined but not fully implemented yet.
 
 The planned approach:
+
 1. Place rooms in one quadrant (or half)
 2. Rotate placed rooms 180° (RADIAL_2) or 90°/180°/270° (RADIAL_4)
 3. Apply symmetry break chance to skip some rotations
@@ -88,6 +90,7 @@ The planned approach:
 ### Asymmetric
 
 Random placement without constraints:
+
 1. Start with base radius around origin
 2. Try random positions until room fits
 3. Expand search radius on failures
@@ -122,6 +125,7 @@ RESERVED cells form a 1-cell buffer around rooms:
 ```
 
 **Purpose**:
+
 - Prevents rooms from touching directly
 - Passages can cross ONE reserved cell (to connect to room)
 - Pattern `RR` invalid for long passages (prevents hugging walls)
@@ -141,7 +145,7 @@ Example: Round room with N/S/E/W exits
    R R O R R      O = ROOM (circle interior)
    R O O O R
    R R O R R
-     R X R        X = Exit cell  
+     R X R        X = Exit cell
      B . B        B = BLOCKED beside S exit
 ```
 
@@ -168,7 +172,7 @@ Rooms are placed **edge-to-edge** with 1-cell passages:
 ```python
 def _place_room_adjacent(anchor, direction, new_room, dungeon):
     ax, ay = anchor.center_grid
-    
+
     if direction == 'south':
         new_room.x = ax - new_room.width // 2
         new_room.y = anchor.y + anchor.height + 1  # 1 cell gap
@@ -202,13 +206,13 @@ After rooms are placed, connect them minimally:
 def _connect_rooms(dungeon):
     rooms = list(dungeon.rooms.values())
     points = [room.center_grid for room in rooms]
-    
+
     # Delaunay → all possible connections
     triangulation = delaunay_triangulation(points)
-    
+
     # MST → minimal connected graph
     mst_edges = minimum_spanning_tree(triangulation)
-    
+
     for edge in mst_edges:
         passage = create_passage(rooms[edge[0]], rooms[edge[1]])
         add_validated_passage(dungeon, passage)
@@ -222,7 +226,7 @@ Add **loops and alternate paths** beyond the MST. This creates more interesting 
 def _add_extra_connections(dungeon):
     # Get all Delaunay edges not in MST
     extra_edges = delaunay_edges - mst_edges
-    
+
     # Add some based on loop_factor parameter
     for edge in extra_edges:
         if random() < loop_factor:
@@ -232,21 +236,21 @@ def _add_extra_connections(dungeon):
                 add_validated_passage(dungeon, passage)
 ```
 
-### A* Pathfinding
+### A\* Pathfinding
 
-Passages use A* to find routes around obstacles:
+Passages use A\* to find routes around obstacles:
 
 ```python
 def find_path(start, end, allowed_rooms, max_iterations):
     # State = (position, direction, prev_category)
     # Cost includes: distance + turn penalty + cell penalty
-    
+
     for direction in ['N', 'S', 'E', 'W']:
         neighbor = current + direction_offset
-        
+
         # Check pattern rules
         can_move, category = can_move_to(neighbor, prev_category)
-        
+
         # Penalize turns and non-empty cells
         turn_cost = 0.5 if is_turn else 0
         cell_cost = 0.2 if category in ('R', 'P') else 0
@@ -261,11 +265,11 @@ def _generate_doors(dungeon):
     for passage in dungeon.passages.values():
         start_room = dungeon.rooms[passage.start_room]
         end_room = dungeon.rooms[passage.end_room]
-        
+
         # Find where passage enters each room
         start_entry = find_entry_point(passage, start_room)
         end_entry = find_entry_point(passage, end_room)
-        
+
         # Create doors at entry points
         for entry in [start_entry, end_entry]:
             door_type = choose_door_type()  # OPEN, CLOSED, SECRET
@@ -279,22 +283,22 @@ def _generate_doors(dungeon):
 
 ### Currently Implemented
 
-| Archetype | Effect |
-|-----------|--------|
-| **LAIR** | Tags the largest room as 'lair' and 'boss' |
-| **TEMPLE** | Tags the most central room as 'sanctum' |
+| Archetype  | Effect                                     |
+| ---------- | ------------------------------------------ |
+| **LAIR**   | Tags the largest room as 'lair' and 'boss' |
+| **TEMPLE** | Tags the most central room as 'sanctum'    |
 
 ### Planned (Not Yet Implemented)
 
 The following archetypes are defined but have no effect (yet) on generation:
 
-| Archetype | Intended Effect |
-|-----------|-----------------|
-| **CLASSIC** | Default balanced settings |
-| **WARREN** | Smaller rooms, higher density, more loops |
-| **CRYPT** | Linear layout, more dead ends |
-| **CAVERN** | Irregular shapes, organic passages |
-| **FORTRESS** | Regular grid, defensive layout |
+| Archetype    | Intended Effect                           |
+| ------------ | ----------------------------------------- |
+| **CLASSIC**  | Default balanced settings                 |
+| **WARREN**   | Smaller rooms, higher density, more loops |
+| **CRYPT**    | Linear layout, more dead ends             |
+| **CAVERN**   | Irregular shapes, organic passages        |
+| **FORTRESS** | Regular grid, defensive layout            |
 
 To achieve these effects manually, adjust `GenerationParams`:
 
@@ -327,11 +331,13 @@ Rooms are numbered using a **branch-cluster algorithm** that assigns contiguous 
 ### Why Clockwise Clustering?
 
 Simple BFS/DFS would interleave rooms from different branches:
+
 ```
 BFS: 1 → 2,3,4 → 5,6,7...  (mixed branches)
 ```
 
 Branch-cluster keeps branches together:
+
 ```
 Branch-cluster: 1 → 2,3,4 (left branch) → 5,6 (right branch) → 7,8,9 (spine)
 ```
@@ -345,24 +351,24 @@ class _DungeonNumberer:
     def _process_junction_room(self, u, parent):
         # Order exits clockwise from incoming direction
         exits = self._ordered_exits(u, parent)
-        
+
         for v in exits:
             if v in self.visited:
                 continue
-            
+
             # Find all rooms reachable through v (blocking u)
             component = self._component_without_node(v, blocked=u)
-            
+
             # Number entire branch as contiguous cluster
             self._number_component_clustered(root=u, entry=v, component=component)
-    
+
     def _sort_by_clockwise(self, u, parent, neighbors):
         # Reference direction: from parent→u, or spine direction at entrance
         if parent:
             ref_dir = normalize(u_pos - parent_pos)
         else:
             ref_dir = self.spine_direction  # (0, 1) for south-going spine
-        
+
         # Sort by clockwise angle from reference
         return sorted(neighbors, key=lambda v: clockwise_angle(ref_dir, u→v))
 ```
@@ -399,7 +405,7 @@ assert dungeon1.rooms == dungeon2.rooms  # Identical
 ```
 
 This is achieved by:
+
 - Seeding all RNG instances
 - Processing in deterministic order
 - Separating placement and termination seeds for symmetry
-

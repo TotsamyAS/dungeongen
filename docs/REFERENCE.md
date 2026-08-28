@@ -43,16 +43,16 @@ from dungeongen.layout import GenerationParams, DungeonSize, SymmetryType, Dunge
 
 #### Attributes
 
-| Attribute | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `size` | `DungeonSize` | `MEDIUM` | Overall dungeon size |
-| `symmetry` | `SymmetryType` | `NONE` | Symmetry mode |
-| `archetype` | `DungeonArchetype` | `CLASSIC` | Structural pattern |
-| `room_size_bias` | `float` | `0.0` | -1.0 (small) to 1.0 (large) |
-| `round_room_chance` | `float` | `0.15` | Chance of circular rooms |
-| `density` | `float` | `0.5` | 0.0 (sparse) to 1.0 (tight) |
-| `loop_factor` | `float` | `0.3` | Extra connections beyond MST |
-| `passage_width` | `int` | `1` | Passage width in grid units |
+| Attribute           | Type               | Default   | Description                  |
+| ------------------- | ------------------ | --------- | ---------------------------- |
+| `size`              | `DungeonSize`      | `MEDIUM`  | Overall dungeon size         |
+| `symmetry`          | `SymmetryType`     | `NONE`    | Symmetry mode                |
+| `archetype`         | `DungeonArchetype` | `CLASSIC` | Structural pattern           |
+| `room_size_bias`    | `float`            | `0.0`     | -1.0 (small) to 1.0 (large)  |
+| `round_room_chance` | `float`            | `0.15`    | Chance of circular rooms     |
+| `density`           | `float`            | `0.5`     | 0.0 (sparse) to 1.0 (tight)  |
+| `loop_factor`       | `float`            | `0.3`     | Extra connections beyond MST |
+| `passage_width`     | `int`              | `1`       | Passage width in grid units  |
 
 ---
 
@@ -62,16 +62,16 @@ Output data structure from generation.
 
 #### Attributes
 
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `rooms` | `Dict[str, Room]` | Room instances by ID |
-| `passages` | `Dict[str, Passage]` | Passage instances by ID |
-| `doors` | `Dict[str, Door]` | Door instances by ID |
-| `stairs` | `Dict[str, Stair]` | Stair instances by ID |
-| `exits` | `Dict[str, Exit]` | Exit instances by ID |
-| `seed` | `int` | Seed used for generation |
-| `bounds` | `Tuple[int,int,int,int]` | Bounding box (x, y, width, height) |
-| `mirror_pairs` | `Dict[str, str]` | Room ID pairs for symmetric layouts |
+| Attribute      | Type                     | Description                         |
+| -------------- | ------------------------ | ----------------------------------- |
+| `rooms`        | `Dict[str, Room]`        | Room instances by ID                |
+| `passages`     | `Dict[str, Passage]`     | Passage instances by ID             |
+| `doors`        | `Dict[str, Door]`        | Door instances by ID                |
+| `stairs`       | `Dict[str, Stair]`       | Stair instances by ID               |
+| `exits`        | `Dict[str, Exit]`        | Exit instances by ID                |
+| `seed`         | `int`                    | Seed used for generation            |
+| `bounds`       | `Tuple[int,int,int,int]` | Bounding box (x, y, width, height)  |
+| `mirror_pairs` | `Dict[str, str]`         | Room ID pairs for symmetric layouts |
 
 ---
 
@@ -79,7 +79,7 @@ Output data structure from generation.
 
 **`DungeonSize`**: `TINY`, `SMALL`, `MEDIUM`, `LARGE`, `XLARGE`
 
-**`SymmetryType`**: `NONE`, `BILATERAL`, `RADIAL_2` *(future)*, `RADIAL_4` *(future)*
+**`SymmetryType`**: `NONE`, `BILATERAL`, `RADIAL_2` _(future)_, `RADIAL_4` _(future)_
 
 **`DungeonArchetype`**: `CLASSIC`, `WARREN`, `TEMPLE`, `CRYPT`, `CAVERN`, `FORTRESS`, `LAIR`
 
@@ -99,13 +99,13 @@ from dungeongen.map.mapelement import MapElement
 
 #### Properties
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `bounds` | `Rectangle` | Bounding box of the element |
-| `shape` | `Shape` | Geometric shape of the element |
-| `connections` | `Sequence[MapElement]` | Connected elements |
-| `props` | `Sequence[Prop]` | Props contained in this element |
-| `map` | `Map` | Parent map this element belongs to |
+| Property      | Type                   | Description                        |
+| ------------- | ---------------------- | ---------------------------------- |
+| `bounds`      | `Rectangle`            | Bounding box of the element        |
+| `shape`       | `Shape`                | Geometric shape of the element     |
+| `connections` | `Sequence[MapElement]` | Connected elements                 |
+| `props`       | `Sequence[Prop]`       | Props contained in this element    |
+| `map`         | `Map`                  | Parent map this element belongs to |
 
 #### Methods
 
@@ -141,10 +141,10 @@ from dungeongen.map.region import Region
 
 #### Attributes
 
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `shape` | `Shape` | Combined shape of all elements |
-| `elements` | `List[MapElement]` | Elements in this region |
+| Attribute  | Type               | Description                    |
+| ---------- | ------------------ | ------------------------------ |
+| `shape`    | `Shape`            | Combined shape of all elements |
+| `elements` | `List[MapElement]` | Elements in this region        |
 
 #### Methods
 
@@ -166,12 +166,12 @@ Enum defining the rendering layer order.
 from dungeongen.map.enums import Layers
 ```
 
-| Value | Description |
-|-------|-------------|
-| `SHADOW` | Shadow layer, drawn first |
-| `PROPS` | Main prop layer |
+| Value     | Description                                   |
+| --------- | --------------------------------------------- |
+| `SHADOW`  | Shadow layer, drawn first                     |
+| `PROPS`   | Main prop layer                               |
 | `OVERLAY` | Overlay layer (doors drawn on top of borders) |
-| `TEXT` | Text layer (room numbers) |
+| `TEXT`    | Text layer (room numbers)                     |
 
 ---
 
@@ -239,14 +239,14 @@ dungeon_map.set_water(
 
 #### Properties
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `bounds` | `Rectangle` | Bounding box of all elements |
-| `rooms` | `Iterator[Room]` | All room elements |
-| `passages` | `Iterator[Passage]` | All passage elements |
-| `doors` | `Iterator[Door]` | All door elements |
-| `exits` | `Iterator[Exit]` | All exit elements |
-| `options` | `Options` | Rendering options |
+| Property   | Type                | Description                  |
+| ---------- | ------------------- | ---------------------------- |
+| `bounds`   | `Rectangle`         | Bounding box of all elements |
+| `rooms`    | `Iterator[Room]`    | All room elements            |
+| `passages` | `Iterator[Passage]` | All passage elements         |
+| `doors`    | `Iterator[Door]`    | All door elements            |
+| `exits`    | `Iterator[Exit]`    | All exit elements            |
+| `options`  | `Options`           | Rendering options            |
 
 ---
 
@@ -260,21 +260,21 @@ from dungeongen.options import Options
 
 #### Key Attributes
 
-| Attribute | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `canvas_width` | `int` | `2000` | Default canvas width |
-| `canvas_height` | `int` | `2000` | Default canvas height |
-| `border_width` | `float` | `6.0` | Room/passage border thickness |
-| `border_color` | `int` | `0xFF000000` | Border color (ARGB) |
-| `room_color` | `int` | `0xFFFFFFFF` | Room fill color |
-| `room_shadow_color` | `int` | `0xFFD0D0D0` | Shadow color |
-| `room_shadow_offset_x` | `float` | `6.0` | Shadow X offset |
-| `room_shadow_offset_y` | `float` | `8.0` | Shadow Y offset |
-| `crosshatch_stroke_width` | `float` | `1.5` | Crosshatch line thickness |
-| `crosshatch_border_size` | `float` | `24.0` | Crosshatch area around rooms |
-| `grid_style` | `GridStyle` | `DOTS` | Grid overlay style |
-| `grid_color` | `int` | `0xFF202020` | Grid color |
-| `map_border_cells` | `float` | `4.0` | Padding around map in grid cells |
+| Attribute                 | Type        | Default      | Description                      |
+| ------------------------- | ----------- | ------------ | -------------------------------- |
+| `canvas_width`            | `int`       | `2000`       | Default canvas width             |
+| `canvas_height`           | `int`       | `2000`       | Default canvas height            |
+| `border_width`            | `float`     | `6.0`        | Room/passage border thickness    |
+| `border_color`            | `int`       | `0xFF000000` | Border color (ARGB)              |
+| `room_color`              | `int`       | `0xFFFFFFFF` | Room fill color                  |
+| `room_shadow_color`       | `int`       | `0xFFD0D0D0` | Shadow color                     |
+| `room_shadow_offset_x`    | `float`     | `6.0`        | Shadow X offset                  |
+| `room_shadow_offset_y`    | `float`     | `8.0`        | Shadow Y offset                  |
+| `crosshatch_stroke_width` | `float`     | `1.5`        | Crosshatch line thickness        |
+| `crosshatch_border_size`  | `float`     | `24.0`       | Crosshatch area around rooms     |
+| `grid_style`              | `GridStyle` | `DOTS`       | Grid overlay style               |
+| `grid_color`              | `int`       | `0xFF202020` | Grid color                       |
+| `map_border_cells`        | `float`     | `4.0`        | Padding around map in grid cells |
 
 ---
 
@@ -286,13 +286,13 @@ Preset water depth levels.
 from dungeongen.map.water_layer import WaterDepth
 ```
 
-| Constant | Value | Coverage |
-|----------|-------|----------|
-| `DRY` | `0.0` | No water |
-| `PUDDLES` | `0.75` | ~30-40% |
-| `POOLS` | `0.60` | ~50-60% |
-| `LAKES` | `0.45` | ~70-80% |
-| `FLOODED` | `0.30` | ~85-95% |
+| Constant  | Value  | Coverage |
+| --------- | ------ | -------- |
+| `DRY`     | `0.0`  | No water |
+| `PUDDLES` | `0.75` | ~30-40%  |
+| `POOLS`   | `0.60` | ~50-60%  |
+| `LAKES`   | `0.45` | ~70-80%  |
+| `FLOODED` | `0.30` | ~85-95%  |
 
 ---
 
@@ -320,6 +320,7 @@ dungeon_map = convert_dungeon(
 ```
 
 This function:
+
 - Creates a new `Map` with default `Options`
 - Converts all rooms, passages, doors, stairs, and exits
 - Handles coordinate normalization
@@ -348,17 +349,17 @@ Prop(prop_type: PropType, position: Point, rotation: Rotation = Rotation.ROT_0,
 
 #### Properties
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `position` | `Point` | Top-left of grid bounds (or bounds for non-grid) |
-| `center` | `Point` | Center of the prop |
-| `bounds` | `Rectangle` | Bounding rectangle |
-| `grid_bounds` | `Rectangle` | Grid-aligned bounds (if grid-aligned) |
-| `grid_size` | `Point` | Size in grid units (if grid-aligned) |
-| `rotation` | `Rotation` | Current rotation |
-| `shape` | `Shape` | Collision boundary |
-| `container` | `MapElement` | Element containing this prop |
-| `prop_type` | `PropType` | Type configuration |
+| Property      | Type         | Description                                      |
+| ------------- | ------------ | ------------------------------------------------ |
+| `position`    | `Point`      | Top-left of grid bounds (or bounds for non-grid) |
+| `center`      | `Point`      | Center of the prop                               |
+| `bounds`      | `Rectangle`  | Bounding rectangle                               |
+| `grid_bounds` | `Rectangle`  | Grid-aligned bounds (if grid-aligned)            |
+| `grid_size`   | `Point`      | Size in grid units (if grid-aligned)             |
+| `rotation`    | `Rotation`   | Current rotation                                 |
+| `shape`       | `Shape`      | Collision boundary                               |
+| `container`   | `MapElement` | Element containing this prop                     |
+| `prop_type`   | `PropType`   | Type configuration                               |
 
 #### Methods
 
@@ -390,13 +391,13 @@ from dungeongen.map._props.prop import PropType
 
 #### Attributes
 
-| Attribute | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `is_decoration` | `bool` | `False` | Decorations don't block other props |
-| `is_wall_aligned` | `bool` | `False` | Snaps to walls based on rotation |
-| `is_grid_aligned` | `bool` | `False` | Snaps to grid cell intersections |
-| `grid_size` | `Point` | `None` | Size in grid units (width, height) |
-| `boundary_shape` | `Shape` | `None` | Collision shape centered at origin |
+| Attribute         | Type    | Default | Description                         |
+| ----------------- | ------- | ------- | ----------------------------------- |
+| `is_decoration`   | `bool`  | `False` | Decorations don't block other props |
+| `is_wall_aligned` | `bool`  | `False` | Snaps to walls based on rotation    |
+| `is_grid_aligned` | `bool`  | `False` | Snaps to grid cell intersections    |
+| `grid_size`       | `Point` | `None`  | Size in grid units (width, height)  |
+| `boundary_shape`  | `Shape` | `None`  | Collision shape centered at origin  |
 
 ---
 
@@ -408,12 +409,12 @@ Enum for 90° rotation increments.
 from dungeongen.graphics.rotation import Rotation
 ```
 
-| Value | Degrees | Radians |
-|-------|---------|---------|
-| `ROT_0` | 0° | 0 |
-| `ROT_90` | 90° | π/2 |
-| `ROT_180` | 180° | π |
-| `ROT_270` | 270° | 3π/2 |
+| Value     | Degrees | Radians |
+| --------- | ------- | ------- |
+| `ROT_0`   | 0°      | 0       |
+| `ROT_90`  | 90°     | π/2     |
+| `ROT_180` | 180°    | π       |
+| `ROT_270` | 270°    | 3π/2    |
 
 ---
 
@@ -427,13 +428,13 @@ from dungeongen.map.door import Door, DoorState
 from dungeongen.map.exit import Exit
 ```
 
-| Class | Description |
-|-------|-------------|
-| `Column` | Round or square columns (1/3 cell size) |
-| `Altar` | Rectangular altar tables |
+| Class    | Description                               |
+| -------- | ----------------------------------------- |
+| `Column` | Round or square columns (1/3 cell size)   |
+| `Altar`  | Rectangular altar tables                  |
 | `Stairs` | Up/down stairs with directional rendering |
-| `Door` | Open, closed, or secret doors |
-| `Exit` | Dungeon entrance/exit markers |
+| `Door`   | Open, closed, or secret doors             |
+| `Exit`   | Dungeon entrance/exit markers             |
 
 ---
 
@@ -447,13 +448,13 @@ These are the data models output by the layout generator.
 from dungeongen.layout import Room, RoomShape
 ```
 
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `id` | `str` | Unique identifier |
-| `x`, `y` | `int` | Grid position (top-left) |
-| `width`, `height` | `int` | Dimensions in grid units |
-| `shape` | `RoomShape` | `RECTANGLE` or `CIRCLE` |
-| `number` | `int` | Display number (1, 2, 3...) |
+| Attribute         | Type        | Description                 |
+| ----------------- | ----------- | --------------------------- |
+| `id`              | `str`       | Unique identifier           |
+| `x`, `y`          | `int`       | Grid position (top-left)    |
+| `width`, `height` | `int`       | Dimensions in grid units    |
+| `shape`           | `RoomShape` | `RECTANGLE` or `CIRCLE`     |
+| `number`          | `int`       | Display number (1, 2, 3...) |
 
 ### `Passage` (layout)
 
@@ -461,13 +462,13 @@ from dungeongen.layout import Room, RoomShape
 from dungeongen.layout import Passage, PassageStyle
 ```
 
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `id` | `str` | Unique identifier |
-| `waypoints` | `List[Tuple[int,int]]` | Grid coordinates (corners) |
-| `start_room` | `str` | Starting room ID |
-| `end_room` | `str` | Ending room ID |
-| `style` | `PassageStyle` | Rendering style |
+| Attribute    | Type                   | Description                |
+| ------------ | ---------------------- | -------------------------- |
+| `id`         | `str`                  | Unique identifier          |
+| `waypoints`  | `List[Tuple[int,int]]` | Grid coordinates (corners) |
+| `start_room` | `str`                  | Starting room ID           |
+| `end_room`   | `str`                  | Ending room ID             |
+| `style`      | `PassageStyle`         | Rendering style            |
 
 ### `Door` (layout)
 
@@ -475,10 +476,10 @@ from dungeongen.layout import Passage, PassageStyle
 from dungeongen.layout import Door, DoorType
 ```
 
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `id` | `str` | Unique identifier |
-| `x`, `y` | `int` | Grid position |
+| Attribute   | Type       | Description                |
+| ----------- | ---------- | -------------------------- |
+| `id`        | `str`      | Unique identifier          |
+| `x`, `y`    | `int`      | Grid position              |
 | `door_type` | `DoorType` | `OPEN`, `CLOSED`, `SECRET` |
 
 ---
@@ -521,7 +522,7 @@ Mark cells as occupied by a passage with reserved buffer.
 
 **`find_path(start: Tuple[int, int], end: Tuple[int, int], ...) → List[Tuple[int, int]] | None`**
 
-A* pathfinding that avoids obstacles. Returns waypoints (turns only).
+A\* pathfinding that avoids obstacles. Returns waypoints (turns only).
 
 ---
 
@@ -533,15 +534,15 @@ Enum for what occupies a grid cell.
 from dungeongen.layout.occupancy import CellType
 ```
 
-| Value | Description | Passable? |
-|-------|-------------|-----------|
-| `EMPTY` | Nothing here | Yes |
-| `ROOM` | Room interior | No |
-| `PASSAGE` | Corridor cell | Yes (once) |
-| `WALL` | Room perimeter | No |
-| `DOOR` | Connection point | No |
-| `RESERVED` | Buffer around rooms | Yes (once) |
-| `BLOCKED` | Corners, exit adjacents | No |
+| Value      | Description             | Passable?  |
+| ---------- | ----------------------- | ---------- |
+| `EMPTY`    | Nothing here            | Yes        |
+| `ROOM`     | Room interior           | No         |
+| `PASSAGE`  | Corridor cell           | Yes (once) |
+| `WALL`     | Room perimeter          | No         |
+| `DOOR`     | Connection point        | No         |
+| `RESERVED` | Buffer around rooms     | Yes (once) |
+| `BLOCKED`  | Corners, exit adjacents | No         |
 
 ---
 
@@ -553,13 +554,13 @@ Additional flags on cells.
 from dungeongen.layout.occupancy import CellModifier
 ```
 
-| Value | Description |
-|-------|-------------|
-| `NONE` | No modifier |
-| `DOOR` | Cell has a door (blocks crossing) |
-| `JUNCTION` | T-junction or crossing |
-| `STAIRS` | Cell has stairs (blocks crossing) |
-| `EXIT` | Dungeon entrance/exit |
+| Value      | Description                       |
+| ---------- | --------------------------------- |
+| `NONE`     | No modifier                       |
+| `DOOR`     | Cell has a door (blocks crossing) |
+| `JUNCTION` | T-junction or crossing            |
+| `STAIRS`   | Cell has stairs (blocks crossing) |
+| `EXIT`     | Dungeon entrance/exit             |
 
 ---
 
@@ -627,4 +628,3 @@ map_x, map_y = grid_to_map(5, 10)
 # Map pixels (200, 400) → Grid (5, 10)
 grid_x, grid_y = map_to_grid(200, 400)
 ```
-

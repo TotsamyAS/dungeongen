@@ -183,6 +183,9 @@ svg {
 	user-select: none;
 	-webkit-user-drag: none;
 }
+.map-image[hidden] {
+	display: none;
+}
 .map-structure-canvas {
 	position: absolute;
 	inset: 0;

@@ -474,6 +474,7 @@ class Map:
         *,
         timing: Optional[Callable[[str, float], None]] = None,
         fast_crosshatch: bool = False,
+        render_flags: Optional[dict[str, bool]] = None,
     ) -> None:
         """Render the map to a canvas.
         
@@ -491,6 +492,9 @@ class Map:
                 timing(name, (now - started_at) * 1000)
             return now
 
+        def render_enabled(name: str) -> bool:
+            return render_flags is None or render_flags.get(name, True) is not False
+
         stage_started_at = time.perf_counter()
         # Get canvas dimensions
         canvas_width = canvas.imageInfo().width()
@@ -499,14 +503,16 @@ class Map:
         # Calculate or use provided transform
         matrix = transform if transform is not None else self.calculate_fit_transform(canvas_width, canvas_height)
         
-        # Clear canvas with background color
-        background_paint = skia.Paint(
-            Color=self.options.crosshatch_background_color
-        )
-        canvas.drawRect(
-            skia.Rect.MakeWH(canvas_width, canvas_height),
-            background_paint
-        )
+        # Clear canvas with background color. Individual layers can be disabled for
+        # profiling/diagnostics without changing the renderer's default output.
+        if render_enabled("render_background"):
+            background_paint = skia.Paint(
+                Color=self.options.crosshatch_background_color
+            )
+            canvas.drawRect(
+                skia.Rect.MakeWH(canvas_width, canvas_height),
+                background_paint
+            )
         stage_started_at = stage("render_background", stage_started_at)
         
         # Get all regions and create crosshatch shape
@@ -524,19 +530,20 @@ class Map:
         canvas.save()
         canvas.concat(matrix)
         
-        # Draw filled gray background for crosshatch areas
-        shading_paint = skia.Paint(
-            AntiAlias=True,
-            Style=skia.Paint.kFill_Style,
-            Color=self.options.crosshatch_shading_color
-        )
-        crosshatch_shape.draw(canvas, shading_paint)
-        
-        # Draw crosshatching pattern using optimized tiled system
-        if fast_crosshatch:
-            draw_crosshatches_clipped_tiled(canvas, crosshatch_shape, self.hatch_tile, self.options)
-        else:
-            draw_crosshatches_tiled(canvas, crosshatch_shape, self.hatch_tile, self.options)
+        # Draw filled gray background and hatching around rooms/corridors.
+        if render_enabled("render_crosshatch"):
+            shading_paint = skia.Paint(
+                AntiAlias=True,
+                Style=skia.Paint.kFill_Style,
+                Color=self.options.crosshatch_shading_color
+            )
+            crosshatch_shape.draw(canvas, shading_paint)
+
+            # Draw crosshatching pattern using optimized tiled system.
+            if fast_crosshatch:
+                draw_crosshatches_clipped_tiled(canvas, crosshatch_shape, self.hatch_tile, self.options)
+            else:
+                draw_crosshatches_tiled(canvas, crosshatch_shape, self.hatch_tile, self.options)
         stage_started_at = stage("render_crosshatch", stage_started_at)
 
         region_base_ms = 0.0
@@ -554,46 +561,46 @@ class Map:
             # 2. Clip to region shape
             canvas.clipPath(region.shape.to_path(), skia.ClipOp.kIntersect, True)  # antialiased
             
-            # 3. Draw shadows first (no offset, but account for stroke width)
-            shadow_paint = skia.Paint(
-                AntiAlias=True,
-                Style=skia.Paint.kFill_Style,
-                Color=self.options.room_shadow_color,
-                StrokeWidth=0
-            )
-            # Draw shadow shape
-            region.shape.draw(canvas, shadow_paint)
-            
-            # 4. Draw the filled room on top of shadow (with offset)
-            room_paint = skia.Paint(
-                AntiAlias=True,
-                Style=skia.Paint.kFill_Style,
-                Color=self.options.room_color
-            )
-            canvas.save()
-            canvas.translate(
-                self.options.room_shadow_offset_x + (self.options.border_width * 0.5),
-                self.options.room_shadow_offset_y + (self.options.border_width * 0.5)
-            )
-            region.shape.draw(canvas, room_paint)
-            canvas.restore()
+            # 3-4. Draw the room/corridor base and fill.
+            if render_enabled("render_region_base"):
+                shadow_paint = skia.Paint(
+                    AntiAlias=True,
+                    Style=skia.Paint.kFill_Style,
+                    Color=self.options.room_shadow_color,
+                    StrokeWidth=0
+                )
+                region.shape.draw(canvas, shadow_paint)
+
+                room_paint = skia.Paint(
+                    AntiAlias=True,
+                    Style=skia.Paint.kFill_Style,
+                    Color=self.options.room_color
+                )
+                canvas.save()
+                canvas.translate(
+                    self.options.room_shadow_offset_x + (self.options.border_width * 0.5),
+                    self.options.room_shadow_offset_y + (self.options.border_width * 0.5)
+                )
+                region.shape.draw(canvas, room_paint)
+                canvas.restore()
             region_base_ms += (time.perf_counter() - layer_started_at) * 1000
 
             # 5. Draw region element shadows
             layer_started_at = time.perf_counter()
-            for element in region.elements:
-                element.draw(canvas, Layers.SHADOW)
+            if render_enabled("render_region_shadows"):
+                for element in region.elements:
+                    element.draw(canvas, Layers.SHADOW)
             region_shadows_ms += (time.perf_counter() - layer_started_at) * 1000
 
             # 5. Draw grid if enabled (still clipped by mask)
             layer_started_at = time.perf_counter()
-            if self.options.grid_style not in (None, GridStyle.NONE):
+            if render_enabled("render_region_grid") and self.options.grid_style not in (None, GridStyle.NONE):
                 draw_region_grid(canvas, region, self.options)
             region_grid_ms += (time.perf_counter() - layer_started_at) * 1000
 
             # 5.5. Draw water if enabled (clipped by region shape)
             layer_started_at = time.perf_counter()
-            if self._manual_water_shape is not None:
+            if render_enabled("render_region_water") and self._manual_water_shape is not None:
                 water_fill = skia.Paint(
                     AntiAlias=True,
                     Style=skia.Paint.kFill_Style,
@@ -607,7 +614,7 @@ class Map:
                 )
                 self._manual_water_shape.draw(canvas, water_fill)
                 self._manual_water_shape.draw(canvas, water_stroke)
-            elif self.water_layer and self.water_layer.shapes:
+            elif render_enabled("render_region_water") and self.water_layer and self.water_layer.shapes:
                 # Translate water to map coordinates (water is generated at 0,0)
                 canvas.save()
                 canvas.translate(self.bounds.x, self.bounds.y)
@@ -633,8 +640,9 @@ class Map:
 
             # 6. Draw region elements props
             layer_started_at = time.perf_counter()
-            for element in region.elements:
-                element.draw(canvas, Layers.PROPS)
+            if render_enabled("render_region_props"):
+                for element in region.elements:
+                    element.draw(canvas, Layers.PROPS)
             region_props_ms += (time.perf_counter() - layer_started_at) * 1000
 
             # 7. Restore transform and clear clip mask
@@ -661,18 +669,21 @@ class Map:
         for region in regions:
             unified_border.addPath(region.shape.to_path())
             
-        # Draw the unified border path
-        canvas.drawPath(unified_border, border_paint)
+        # Draw the unified border path.
+        if render_enabled("render_borders"):
+            canvas.drawPath(unified_border, border_paint)
         stage_started_at = stage("render_borders", stage_started_at)
 
-        # Draw doors layer after borders
-        for element in self._elements:
-            element.draw(canvas, Layers.OVERLAY)
+        # Draw doors/exits layer after borders.
+        if render_enabled("render_overlays"):
+            for element in self._elements:
+                element.draw(canvas, Layers.OVERLAY)
         stage_started_at = stage("render_overlays", stage_started_at)
 
-        # Draw text layer (room numbers)
-        for element in self._elements:
-            element.draw(canvas, Layers.TEXT)
+        # Draw map-owned text layer. Project room numbers are drawn separately.
+        if render_enabled("render_text"):
+            for element in self._elements:
+                element.draw(canvas, Layers.TEXT)
 
         # Draw element numbers if enabled
         if debug_draw.is_enabled(DebugDrawFlags.ELEMENT_NUMBERS):

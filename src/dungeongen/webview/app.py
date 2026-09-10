@@ -5,11 +5,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import io
 import json
 import logging
 import re
 import secrets
 import time
+import zipfile
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +34,8 @@ from .project import (
 )
 
 EDITOR_ROOT = Path(__file__).with_name("editor")
+EDITOR_VENDOR_ROOT = EDITOR_ROOT / "vendor"
+PYTHON_CORE_ROOT = Path(__file__).resolve().parents[1]
 SERVICE_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config.json"
 LOCALE_PATTERN = re.compile(r"^[a-z]{2}(?:-[A-Z]{2})?$")
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
@@ -40,6 +45,29 @@ DEFAULT_PREVIEW_SIZE_PIXELS = 48
 DEFAULT_WORKING_COPY_IDLE_SAVE_MS = 15_000
 DEFAULT_WORKING_COPY_INTERVAL_MS = 300_000
 DEFAULT_THEME_SAVE_TIMEOUT_MS = 20_000
+PYODIDE_VERSION = "314.0.6"
+CANVASKIT_VERSION = "0.42.0"
+DEFAULT_PYODIDE_BASE_URL = f"/dungeon-editor/vendor/pyodide-{PYODIDE_VERSION}/"
+DEFAULT_CANVASKIT_MODULE_URL = (
+    f"/dungeon-editor/vendor/canvaskit-{CANVASKIT_VERSION}/canvaskit.mjs"
+)
+DEFAULT_CANVASKIT_WASM_URL = (
+    f"/dungeon-editor/vendor/canvaskit-{CANVASKIT_VERSION}/canvaskit.wasm"
+)
+BROWSER_OPERATION_NAMES = ("edit", "checkpoint", "render")
+BROWSER_RENDER_STAGE_NAMES = (
+    "render_background",
+    "render_crosshatch",
+    "render_region_base",
+    "render_region_shadows",
+    "render_region_grid",
+    "render_region_water",
+    "render_region_props",
+    "render_borders",
+    "render_overlays",
+    "render_text",
+    "room_numbers",
+)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_PROJECT_BYTES + 512 * 1024
@@ -70,7 +98,54 @@ def _logging_enabled(config: dict[str, Any], key: str) -> bool:
     return isinstance(logging_config, dict) and logging_config.get(key) is True
 
 
-def _public_editor_config() -> dict[str, int | bool]:
+def _browser_python_config(config: dict[str, Any]) -> dict[str, Any]:
+    raw = config.get("browserPython")
+    raw = raw if isinstance(raw, dict) else {}
+    raw_operations = raw.get("operations")
+    raw_operations = raw_operations if isinstance(raw_operations, dict) else {}
+    raw_stages = raw.get("renderStages")
+    raw_stages = raw_stages if isinstance(raw_stages, dict) else {}
+
+    def asset_url_value(key: str, default: str, *, directory: bool = False) -> str:
+        value = raw.get(key)
+        if not isinstance(value, str) or not value.startswith("/dungeon-editor/vendor/"):
+            return default
+        if directory and not value.endswith("/"):
+            return f"{value}/"
+        return value
+
+    return {
+        "enabled": raw.get("enabled", True) is not False,
+        "pyodideBaseUrl": asset_url_value(
+            "pyodideBaseUrl", DEFAULT_PYODIDE_BASE_URL, directory=True
+        ),
+        "canvasKitModuleUrl": asset_url_value(
+            "canvasKitModuleUrl", DEFAULT_CANVASKIT_MODULE_URL
+        ),
+        "canvasKitWasmUrl": asset_url_value(
+            "canvasKitWasmUrl", DEFAULT_CANVASKIT_WASM_URL
+        ),
+        "operations": {name: raw_operations.get(name, True) is not False for name in BROWSER_OPERATION_NAMES},
+        "renderStages": {name: raw_stages.get(name, True) is not False for name in BROWSER_RENDER_STAGE_NAMES},
+    }
+
+
+def _timing_log_line(request_id: str, operation: str, stage: str, elapsed_ms: float) -> str:
+    return json.dumps(
+        {
+            "event": "dungeongen.edit.time",
+            "source": "server",
+            "id": request_id,
+            "operation": operation,
+            "stage": stage,
+            "elapsedMs": round(float(elapsed_ms), 3),
+        },
+        separators=(",", ":"),
+    )
+
+
+
+def _public_editor_config() -> dict[str, Any]:
     value = _service_config()
     raw_delay = value.get("colorApplyDelayMs")
     if isinstance(raw_delay, bool) or not isinstance(raw_delay, (int, float)):
@@ -101,6 +176,7 @@ def _public_editor_config() -> dict[str, int | bool]:
         "canvasPaddingCells": CANVAS_PADDING_CELLS,
         "editTimeLogging": _logging_enabled(value, "EDIT_TIME_LOGGING"),
         "themeSaveLogging": _logging_enabled(value, "THEME_SAVE_LOGGING"),
+        "browserPython": _browser_python_config(value),
     }
 
 
@@ -110,7 +186,8 @@ def _editor_response(filename: str, mimetype: str) -> Response:
     if filename == "index.html":
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self'; "
+            "script-src 'self' 'wasm-unsafe-eval'; "
+            "worker-src 'self' blob:; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' blob: data:; "
             "connect-src 'self'; "
@@ -183,6 +260,56 @@ def editor_js() -> Response:
 @app.get("/dungeon-editor/encoder-worker.js")
 def encoder_worker_js() -> Response:
     return _editor_response("encoder-worker.js", "application/javascript; charset=utf-8")
+
+
+@app.get("/dungeon-editor/pyodide-worker.mjs")
+def pyodide_worker_js() -> Response:
+    return _editor_response("pyodide-worker.mjs", "application/javascript; charset=utf-8")
+
+
+@app.get("/dungeon-editor/vendor/<path:filename>")
+def editor_vendor(filename: str) -> Response:
+    mimetype = {
+        ".mjs": "application/javascript; charset=utf-8",
+        ".js": "application/javascript; charset=utf-8",
+        ".json": "application/json; charset=utf-8",
+        ".wasm": "application/wasm",
+        ".zip": "application/zip",
+        ".whl": "application/octet-stream",
+    }.get(Path(filename).suffix, "application/octet-stream")
+    response = send_from_directory(EDITOR_VENDOR_ROOT, filename, mimetype=mimetype, max_age=31536000)
+    response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return response
+
+
+@app.get("/dungeon-editor/pyodide-skia.py")
+def pyodide_skia() -> Response:
+    return _editor_response("pyodide_skia.py", "text/x-python; charset=utf-8")
+
+
+@lru_cache(maxsize=1)
+def _python_core_zip() -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+        for path in sorted(PYTHON_CORE_ROOT.rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(PYTHON_CORE_ROOT)
+            if "__pycache__" in relative.parts or relative.parts[:2] == ("webview", "editor"):
+                continue
+            if path.suffix not in (".py", ".ttf", ".otf", ".woff", ".woff2"):
+                continue
+            archive.write(path, Path("dungeongen") / relative)
+    return output.getvalue()
+
+
+@app.get("/dungeon-editor/python-core.zip")
+def python_core_zip() -> Response:
+    return Response(
+        _python_core_zip(),
+        mimetype="application/zip",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/dungeon-editor/loadscreen_small.png")
@@ -267,10 +394,7 @@ def edit() -> tuple[Response, int] | Response:
 
     def flush_timings() -> None:
         for stage, elapsed_ms in timing_entries:
-            app.logger.info(
-                "[EDIT-TIME] id=%s operation=%s stage=%s elapsed_ms=%.2f",
-                request_id, operation_type, stage, elapsed_ms,
-            )
+            app.logger.info("%s", _timing_log_line(request_id, operation_type, stage, elapsed_ms))
 
     timing = record_timing if edit_time_logging else None
     if timing is not None:
@@ -281,7 +405,12 @@ def edit() -> tuple[Response, int] | Response:
             request_id, request.path, operation_type, request.content_length or 0,
         )
     try:
-        project = edit_project(data, timing=timing, validate_size=False)
+        project = edit_project(
+            data,
+            timing=timing,
+            validate_size=False,
+            render_flags=_browser_python_config(service_config)["renderStages"],
+        )
         encoded_project = project_bytes(project, timing=timing, normalize=False)
     except ProjectValidationError as error:
         if editing_logging:
@@ -342,10 +471,7 @@ def render_edit() -> tuple[Response, int] | Response:
 
     def flush_timings() -> None:
         for stage, elapsed_ms in timing_entries:
-            app.logger.info(
-                "[EDIT-TIME] id=%s operation=render stage=%s elapsed_ms=%.2f",
-                request_id, stage, elapsed_ms,
-            )
+            app.logger.info("%s", _timing_log_line(request_id, "render", stage, elapsed_ms))
 
     timing = record_timing if edit_time_logging else None
     if timing is not None:
@@ -357,7 +483,12 @@ def render_edit() -> tuple[Response, int] | Response:
             request_id, request.path, request.content_length or 0,
         )
     try:
-        project = render_edited_project(data, timing=timing, validate_size=False)
+        project = render_edited_project(
+            data,
+            timing=timing,
+            validate_size=False,
+            render_flags=_browser_python_config(service_config)["renderStages"],
+        )
         encoded_project = project_bytes(project, timing=timing, normalize=False)
     except ProjectValidationError as error:
         if editing_logging:
@@ -392,16 +523,46 @@ def render_edit() -> tuple[Response, int] | Response:
 @app.post("/dungeon-editor/api/checkpoint")
 @app.post("/api/dungeongen/editor/checkpoint")
 def checkpoint_edit() -> tuple[Response, int] | Response:
+    service_config = _service_config()
+    edit_time_logging = _logging_enabled(service_config, "EDIT_TIME_LOGGING")
+    if edit_time_logging and app.logger.getEffectiveLevel() > logging.INFO:
+        app.logger.setLevel(logging.INFO)
+    provided_request_id = request.headers.get("X-Dungeongen-Request-Id", "")
+    request_id = provided_request_id if REQUEST_ID_PATTERN.fullmatch(provided_request_id) else secrets.token_hex(4)
     if not _has_valid_capability():
         return _json_error("unauthorized", 401)
+    request_started_at = time.perf_counter()
+    timing_entries: list[tuple[str, float]] = []
+
+    def record_timing(stage: str, elapsed_ms: float) -> None:
+        timing_entries.append((stage, elapsed_ms))
+
+    def flush_timings() -> None:
+        for stage, elapsed_ms in timing_entries:
+            app.logger.info("%s", _timing_log_line(request_id, "checkpoint", stage, elapsed_ms))
+
+    timing = record_timing if edit_time_logging else None
     try:
-        project = checkpoint_project(request.get_json(silent=True), validate_size=False)
-        encoded_project = project_bytes(project, normalize=False)
+        decode_started_at = time.perf_counter()
+        data = request.get_json(silent=True)
+        if timing is not None:
+            timing("request_decode", (time.perf_counter() - decode_started_at) * 1000)
+        project = checkpoint_project(data, timing=timing, validate_size=False)
+        encoded_project = project_bytes(project, timing=timing, normalize=False)
     except ProjectValidationError as error:
+        if timing is not None:
+            timing("request_handler_total", (time.perf_counter() - request_started_at) * 1000)
+            flush_timings()
         return _json_error(str(error), 400)
     except Exception:
         app.logger.exception("[EDITING] checkpoint failed")
+        if timing is not None:
+            timing("request_handler_total", (time.perf_counter() - request_started_at) * 1000)
+            flush_timings()
         return _json_error("editFailed", 500)
+    if timing is not None:
+        timing("request_handler_total", (time.perf_counter() - request_started_at) * 1000)
+        flush_timings()
     return Response(
         b'{"success":true,"project":' + encoded_project + b"}",
         mimetype="application/json",

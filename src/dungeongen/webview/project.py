@@ -902,8 +902,9 @@ def _edited_map(
     appearance: dict[str, str],
     timing: EditTimingCallback | None = None,
 ):
-    if not project["structure"].get("objectsInitialized"):
-        materialize_project_objects(project)
+    with _timed_edit_stage(timing, "materialize_objects"):
+        if not project["structure"].get("objectsInitialized"):
+            materialize_project_objects(project)
     with _timed_edit_stage(timing, "layout_rebuild"):
         dungeon = _layout_dungeon(project["layout"], project["parameters"])
     cleared = set(project["structure"].get("clearedDecorationRoomIds", []))
@@ -941,6 +942,7 @@ def render_project_svg(
     grid_size: int = DEFAULT_GRID_SIZE,
     padding: int | None = None,
     timing: EditTimingCallback | None = None,
+    render_flags: dict[str, bool] | None = None,
 ) -> str:
     resolved_padding = _resolve_canvas_padding(grid_size, padding)
     with _timed_edit_stage(timing, "canvas_dimensions"):
@@ -955,9 +957,12 @@ def render_project_svg(
         transform.setScale(grid_size / CELL_SIZE, grid_size / CELL_SIZE)
         transform.postTranslate(resolved_padding, resolved_padding)
     with _timed_edit_stage(timing, "map_render"):
-        dungeon_map.render(canvas, transform, timing=timing, fast_crosshatch=True)
+        dungeon_map.render(
+            canvas, transform, timing=timing, fast_crosshatch=True, render_flags=render_flags
+        )
     with _timed_edit_stage(timing, "room_numbers"):
-        _draw_structure_numbers(canvas, project, transform, TEMPLATE_APPEARANCE)
+        if render_flags is None or render_flags.get("room_numbers", True) is not False:
+            _draw_structure_numbers(canvas, project, transform, TEMPLATE_APPEARANCE)
     with _timed_edit_stage(timing, "svg_serialization"):
         del canvas
         return stream.detachAsData().bytes().decode("utf-8")
@@ -1016,6 +1021,7 @@ def edit_project(
     timing: EditTimingCallback | None = None,
     *,
     validate_size: bool = True,
+    render_flags: dict[str, bool] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ProjectValidationError("invalidEdit")
@@ -1038,7 +1044,8 @@ def edit_project(
             )
     project["structure"] = structure
     project["layout"] = layout
-    refresh_spawn_data(project)
+    with _timed_edit_stage(timing, "spawn_data_refresh"):
+        refresh_spawn_data(project)
     with _timed_edit_stage(timing, "stats_update"):
         project["stats"] = {
             **(project["stats"] or {}),
@@ -1051,7 +1058,7 @@ def edit_project(
         raise ProjectValidationError("invalidEdit")
     if not defer_render:
         with _timed_edit_stage(timing, "render_svg_total"):
-            project["renderSvg"] = render_project_svg(project, timing=timing)
+            project["renderSvg"] = render_project_svg(project, timing=timing, render_flags=render_flags)
         project["structure"]["renderedRevision"] = project["structure"]["revision"]
         project["structure"]["renderedFloorCells"] = project["structure"]["floorCells"]
     if validate_size:
@@ -1059,29 +1066,36 @@ def edit_project(
     return project
 
 
-def checkpoint_project(value: Any, *, validate_size: bool = True) -> dict[str, Any]:
+def checkpoint_project(
+    value: Any,
+    timing: EditTimingCallback | None = None,
+    *,
+    validate_size: bool = True,
+) -> dict[str, Any]:
     """Validate a browser working copy without invoking the Skia renderer."""
     if not isinstance(value, dict):
         raise ProjectValidationError("invalidProject")
-    project = normalize_project(value.get("project"))
-    if project["layout"] is None or project["structure"] is None:
-        raise ProjectValidationError("emptyProject")
+    with _timed_edit_stage(timing, "project_normalization"):
+        project = normalize_project(value.get("project"))
+        if project["layout"] is None or project["structure"] is None:
+            raise ProjectValidationError("emptyProject")
     project["renderSvg"] = None
     structure = project["structure"]
     layout = project["layout"]
-    project["stats"] = {
-        **(project["stats"] or {}),
-        "rooms": sum(1 for room in structure["rooms"] if not room["suppressed"]),
-        "doors": len(layout.get("doors", [])),
-        "stairs": len(layout.get("stairs", [])),
-        "exits": len(layout.get("exits", [])),
-    }
+    with _timed_edit_stage(timing, "stats_update"):
+        project["stats"] = {
+            **(project["stats"] or {}),
+            "rooms": sum(1 for room in structure["rooms"] if not room["suppressed"]),
+            "doors": len(layout.get("doors", [])),
+            "stairs": len(layout.get("stairs", [])),
+            "exits": len(layout.get("exits", [])),
+        }
     # The client-first workspace uses floorCells directly. The rendered copy is
     # only an SVG overlay baseline and would duplicate the largest project list
     # in every checkpoint response and durable save.
     structure.pop("renderedFloorCells", None)
     if validate_size:
-        project_bytes(project)
+        project_bytes(project, timing=timing)
     return project
 
 
@@ -1090,6 +1104,7 @@ def render_edited_project(
     timing: EditTimingCallback | None = None,
     *,
     validate_size: bool = True,
+    render_flags: dict[str, bool] | None = None,
 ) -> dict[str, Any]:
     source = value.get("project") if isinstance(value, dict) and "project" in value else value
     with _timed_edit_stage(timing, "project_normalization"):
@@ -1097,12 +1112,86 @@ def render_edited_project(
         if project["layout"] is None or project["structure"] is None:
             raise ProjectValidationError("emptyProject")
     with _timed_edit_stage(timing, "render_svg_total"):
-        project["renderSvg"] = render_project_svg(project, timing=timing)
+        project["renderSvg"] = render_project_svg(project, timing=timing, render_flags=render_flags)
     project["structure"]["renderedRevision"] = project["structure"]["revision"]
     project["structure"]["renderedFloorCells"] = project["structure"]["floorCells"]
     if validate_size:
         project_bytes(project, timing=timing)
     return project
+
+
+def _render_normalized_project_browser_canvas(
+    project: dict[str, Any],
+    timing: EditTimingCallback | None = None,
+    *,
+    render_flags: dict[str, bool] | None = None,
+) -> tuple[dict[str, Any], int, int]:
+    """Render an already-normalized project with the unchanged Python renderer."""
+    grid_size = DEFAULT_GRID_SIZE
+    padding = _resolve_canvas_padding(grid_size, None)
+    with _timed_edit_stage(timing, "canvas_dimensions"):
+        canvas_width, canvas_height = _project_canvas_dimensions(project, grid_size, padding)
+    dungeon_map = _edited_map(project, project["appearance"], timing)
+    with _timed_edit_stage(timing, "browser_canvas_setup"):
+        surface = skia.Surface.MakeBrowserDisplay(canvas_width, canvas_height)
+        canvas = surface.getCanvas()
+        transform = skia.Matrix()
+        transform.setScale(grid_size / CELL_SIZE, grid_size / CELL_SIZE)
+        transform.postTranslate(padding, padding)
+    with _timed_edit_stage(timing, "map_render"):
+        dungeon_map.render(
+            canvas,
+            transform,
+            timing=timing,
+            fast_crosshatch=True,
+            render_flags=render_flags,
+        )
+    with _timed_edit_stage(timing, "room_numbers"):
+        if render_flags is None or render_flags.get("room_numbers", True) is not False:
+            _draw_structure_numbers(canvas, project, transform, project["appearance"])
+    with _timed_edit_stage(timing, "browser_canvas_flush"):
+        surface.flush()
+
+    project["renderSvg"] = None
+    project["structure"]["renderedRevision"] = project["structure"]["revision"]
+    project["structure"]["renderedFloorCells"] = project["structure"]["floorCells"]
+    return project, canvas_width, canvas_height
+
+
+def render_project_browser_canvas(
+    value: Any,
+    timing: EditTimingCallback | None = None,
+    *,
+    render_flags: dict[str, bool] | None = None,
+) -> tuple[dict[str, Any], int, int]:
+    """Render with the unchanged Python renderer into the Worker's CanvasKit canvas."""
+    source = value.get("project") if isinstance(value, dict) and "project" in value else value
+    with _timed_edit_stage(timing, "project_normalization"):
+        project = normalize_project(source)
+        if project["layout"] is None or project["structure"] is None:
+            raise ProjectValidationError("emptyProject")
+    return _render_normalized_project_browser_canvas(
+        project, timing=timing, render_flags=render_flags
+    )
+
+
+def edit_project_browser_canvas(
+    value: Any,
+    timing: EditTimingCallback | None = None,
+    *,
+    render_flags: dict[str, bool] | None = None,
+) -> tuple[dict[str, Any], int, int]:
+    """Apply one existing edit operation and render it in the same browser-Python call."""
+    if not isinstance(value, dict):
+        raise ProjectValidationError("invalidEdit")
+    payload = dict(value)
+    payload["deferRender"] = True
+    with _timed_edit_stage(timing, "edit_apply_total"):
+        project = edit_project(payload, timing=timing, validate_size=False)
+    with _timed_edit_stage(timing, "edit_render_total"):
+        return _render_normalized_project_browser_canvas(
+            project, timing=timing, render_flags=render_flags
+        )
 
 
 def render_project_jpeg(value: Any, quality: int = 92) -> bytes:

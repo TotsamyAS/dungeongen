@@ -1,5 +1,5 @@
 const fallbackLocale = 'ru';
-const editorAssetVersion = '20260810-2';
+const editorAssetVersion = '20260910-1';
 const defaultColorApplyDelayMs = 350;
 const defaultCanonicalRenderDelayMs = 10000;
 const defaultPreviewSizePixels = 48;
@@ -8,6 +8,11 @@ const defaultWorkingCopyIntervalMs = 300000;
 const defaultThemeSaveTimeoutMs = 20000;
 const defaultCellSize = 60;
 const defaultCanvasPaddingCells = 2;
+const disabledBrowserPythonConfig = {
+	enabled: false,
+	operations: { edit: false, checkpoint: false, render: false },
+	renderStages: {}
+};
 const alwaysAvailablePanels = new Set(['projects', 'support', 'about']);
 const maxHistoryEntries = 20;
 const structureTools = new Set(['wall', 'corridor', 'roundRoom', 'roomClass']);
@@ -122,6 +127,18 @@ let colorApplyDelayMs = defaultColorApplyDelayMs;
 let canonicalRenderDelayMs = defaultCanonicalRenderDelayMs;
 let previewSizePixels = defaultPreviewSizePixels;
 let editTimeLogging = false;
+let browserPythonTimeLogging = false;
+let browserPythonConfig = disabledBrowserPythonConfig;
+let pythonWorker = null;
+let pythonWorkerInitPromise = null;
+let pythonWorkerRequestId = 0;
+let pythonWorkerFailed = false;
+let browserCanvasTransferred = false;
+let browserCanvasReady = false;
+let browserCanvasProjectId = null;
+let browserCanvasWidth = 0;
+let browserCanvasHeight = 0;
+let browserCanvasAppearance = '';
 let themeSaveLogging = false;
 let themeSaveTimeoutMs = defaultThemeSaveTimeoutMs;
 let fitImageOnLoad = true;
@@ -161,6 +178,7 @@ let allowNextProjectOpen = false;
 let generatedSeedValue = '';
 const placementIndexCache = { project: null, value: null };
 const encoderRequests = new Map();
+const pythonWorkerRequests = new Map();
 const pendingClassificationCells = new Set();
 const pendingDecorationObjectIds = new Set();
 const renderedDecorationObjectIds = new Set();
@@ -179,6 +197,7 @@ const elements = {
 	canvas: document.getElementById('canvas'),
 	mapSurface: document.getElementById('mapSurface'),
 	structureMap: document.getElementById('structureMap'),
+	browserRenderCanvas: document.getElementById('browserRenderCanvas'),
 	mapImage: document.getElementById('mapImage'),
 	mapImageBuffer: document.getElementById('mapImageBuffer'),
 	structureOverlay: document.getElementById('structureOverlay'),
@@ -640,8 +659,15 @@ async function loadEditorConfig() {
 		const previewSize = Number(config?.previewSizePixels);
 		if (Number.isFinite(previewSize))
 			previewSizePixels = Math.max(32, Math.min(256, Math.round(previewSize)));
-		editTimeLogging = config?.editTimeLogging === true;
-		themeSaveLogging = config?.themeSaveLogging === true;
+		editTimeLogging =
+			config?.logging?.EDIT_TIME_LOGGING === true || config?.editTimeLogging === true;
+		browserPythonTimeLogging =
+			config?.logging?.BROWSER_PYTHON_TIME_LOGGING === true;
+		browserPythonConfig = config?.browserPython?.enabled === true
+			? config.browserPython
+			: disabledBrowserPythonConfig;
+		themeSaveLogging =
+			config?.logging?.THEME_SAVE_LOGGING === true || config?.themeSaveLogging === true;
 		const themeTimeout = Number(config?.themeSaveTimeoutMs);
 		if (Number.isFinite(themeTimeout))
 			themeSaveTimeoutMs = Math.max(5000, Math.min(120000, Math.round(themeTimeout)));
@@ -656,6 +682,8 @@ async function loadEditorConfig() {
 		canonicalRenderDelayMs = defaultCanonicalRenderDelayMs;
 		previewSizePixels = defaultPreviewSizePixels;
 		editTimeLogging = false;
+		browserPythonTimeLogging = false;
+		browserPythonConfig = disabledBrowserPythonConfig;
 		themeSaveLogging = false;
 		themeSaveTimeoutMs = defaultThemeSaveTimeoutMs;
 		workingCopyIdleSaveMs = defaultWorkingCopyIdleSaveMs;
@@ -808,9 +836,219 @@ function newEditRequestId() {
 	);
 }
 
-function logEditTime(requestId, stage, elapsedMs) {
+function logEditTime(requestId, stage, elapsedMs, operation = 'edit', source = 'browser') {
 	if (!editTimeLogging) return;
-	console.info(`[EDIT-TIME] id=${requestId} stage=${stage} elapsed_ms=${elapsedMs.toFixed(2)}`);
+	console.info(
+		JSON.stringify({
+			event: 'dungeongen.edit.time',
+			source,
+			id: requestId,
+			operation,
+			stage,
+			elapsedMs: Math.round(Number(elapsedMs || 0) * 1000) / 1000
+		})
+	);
+}
+
+function logBrowserPythonTime(
+	requestId,
+	operation,
+	stage,
+	elapsedMs,
+	source = 'pyodide-worker',
+	details = {}
+) {
+	if (!browserPythonTimeLogging) return;
+	console.info(
+		JSON.stringify({
+			event: 'dungeongen.browser-python.time',
+			source,
+			id: requestId,
+			operation,
+			stage,
+			elapsedMs: Math.round(Number(elapsedMs || 0) * 1000) / 1000,
+			...details
+		})
+	);
+}
+
+function logBrowserPythonStatus(status, details = {}, level = 'info') {
+	const writer = level === 'error' ? console.error : level === 'warn' ? console.warn : console.info;
+	writer(
+		JSON.stringify({
+			event: 'dungeongen.browser-python',
+			status,
+			...details
+		})
+	);
+}
+
+function reportBrowserPythonFailure(operation, error, phase = 'operation') {
+	logBrowserPythonStatus(
+		'fallback',
+		{
+			operation,
+			phase,
+			error: String(error?.message || error || 'pyodideWorkerFailed'),
+			stack: error?.stack ? String(error.stack) : undefined
+		},
+		'error'
+	);
+}
+
+function browserPythonEnabled(operation) {
+	if (operation === 'editRender')
+		return browserPythonEnabled('edit') && browserPythonEnabled('render');
+	return Boolean(
+		browserPythonConfig?.enabled &&
+			!pythonWorkerFailed &&
+			browserPythonConfig?.operations?.[operation] !== false
+	);
+}
+
+function rejectPythonWorkerRequests(error) {
+	for (const pending of pythonWorkerRequests.values()) pending.reject(error);
+	pythonWorkerRequests.clear();
+}
+
+function postPythonWorker(type, payload = null, extras = {}, transfer = []) {
+	if (!pythonWorker) return Promise.reject(new Error('pyodideWorkerUnavailable'));
+	const id = ++pythonWorkerRequestId;
+	return new Promise((resolve, reject) => {
+		pythonWorkerRequests.set(id, { resolve, reject });
+		pythonWorker.postMessage(
+			{ id, type, payload, config: browserPythonConfig, ...extras },
+			transfer
+		);
+	});
+}
+
+function ensurePythonWorker() {
+	if (!browserPythonConfig?.enabled || pythonWorkerFailed)
+		return Promise.reject(new Error('pyodideDisabled'));
+	if (pythonWorkerInitPromise) return pythonWorkerInitPromise;
+	try {
+		pythonWorker = new Worker(`/dungeon-editor/pyodide-worker.mjs?v=${editorAssetVersion}`, {
+			type: 'module'
+		});
+	} catch (error) {
+		pythonWorkerFailed = true;
+		return Promise.reject(error);
+	}
+	pythonWorker.onmessage = (event) => {
+		const message = event.data ?? {};
+		const pending = pythonWorkerRequests.get(message.id);
+		if (!pending) return;
+		pythonWorkerRequests.delete(message.id);
+		if (message.ok) {
+			pending.resolve(message.result);
+		} else {
+			const error = new Error(message.error || 'pyodideWorkerFailed');
+			if (message.stack) error.stack = String(message.stack);
+			pending.reject(error);
+		}
+	};
+	pythonWorker.onerror = (event) => {
+		const error = new Error(event?.message || 'pyodideWorkerFailed');
+		pythonWorkerFailed = true;
+		reportBrowserPythonFailure('worker', error, 'worker-error');
+		rejectPythonWorkerRequests(error);
+	};
+	const requestId = newEditRequestId();
+	const startedAt = performance.now();
+	pythonWorkerInitPromise = postPythonWorker('init')
+		.then((result) => {
+			for (const entry of result?.timings ?? []) {
+				logEditTime(requestId, entry.stage, entry.elapsedMs, 'init', 'pyodide-worker');
+				logBrowserPythonTime(requestId, 'init', entry.stage, entry.elapsedMs);
+			}
+			const initElapsedMs = performance.now() - startedAt;
+			logEditTime(requestId, 'worker_init_total', initElapsedMs, 'init');
+			logBrowserPythonTime(requestId, 'init', 'worker_init_total', initElapsedMs, 'browser-ui');
+			logBrowserPythonStatus('ready', {
+				elapsedMs: Math.round(initElapsedMs * 1000) / 1000
+			});
+			return result;
+		})
+		.catch((error) => {
+			pythonWorkerFailed = true;
+			reportBrowserPythonFailure('init', error, 'initialization');
+			pythonWorker?.terminate();
+			pythonWorker = null;
+			pythonWorkerInitPromise = null;
+			throw error;
+		});
+	return pythonWorkerInitPromise;
+}
+
+function browserAppearanceSignature(project = currentProject) {
+	return JSON.stringify(normalizeAppearance(project?.appearance));
+}
+
+function hasBrowserCanvasImage(project = currentProject) {
+	return Boolean(
+		browserCanvasReady &&
+		project === currentProject &&
+		browserCanvasProjectId === currentProjectId
+	);
+}
+
+function browserCanvasTransfer() {
+	if (browserCanvasTransferred) return { extras: {}, transfer: [] };
+	if (typeof elements.browserRenderCanvas?.transferControlToOffscreen !== 'function')
+		throw new Error('offscreenCanvasUnavailable');
+	const canvas = elements.browserRenderCanvas.transferControlToOffscreen();
+	browserCanvasTransferred = true;
+	return { extras: { canvas }, transfer: [canvas] };
+}
+
+async function callBrowserPython(operation, payload, requestId = newEditRequestId()) {
+	if (!browserPythonEnabled(operation)) throw new Error('pyodideDisabled');
+	await ensurePythonWorker();
+	const startedAt = performance.now();
+	const needsCanvas = operation === 'render' || operation === 'editRender';
+	const canvasTransfer = needsCanvas ? browserCanvasTransfer() : { extras: {}, transfer: [] };
+	const result = await postPythonWorker(
+		operation,
+		payload,
+		canvasTransfer.extras,
+		canvasTransfer.transfer
+	);
+	const timingDetails = payload?.operation?.type ? { action: payload.operation.type } : {};
+	for (const entry of result?.timings ?? []) {
+		logEditTime(requestId, entry.stage, entry.elapsedMs, operation, 'pyodide-worker');
+		logBrowserPythonTime(
+			requestId,
+			operation,
+			entry.stage,
+			entry.elapsedMs,
+			'pyodide-worker',
+			timingDetails
+		);
+	}
+	const roundtripMs = performance.now() - startedAt;
+	logEditTime(requestId, 'worker_roundtrip', roundtripMs, operation);
+	logBrowserPythonTime(
+		requestId,
+		operation,
+		'worker_roundtrip',
+		roundtripMs,
+		'browser-ui',
+		timingDetails
+	);
+	const workerTotalMs = Number(
+		(result?.timings ?? []).find((entry) => entry.stage === 'worker_total')?.elapsedMs ?? 0
+	);
+	if (workerTotalMs > 0)
+		logBrowserPythonTime(
+			requestId,
+			operation,
+			'worker_transport_overhead',
+			Math.max(0, roundtripMs - workerTotalMs),
+			'browser-ui',
+			timingDetails
+		);
+	return result;
 }
 
 function logThemeSave(requestId, stage, details = {}) {
@@ -1172,7 +1410,11 @@ function compactProject(project = currentProject) {
 }
 
 function projectForEdit(project = currentProject) {
-	return project ? { ...project, renderSvg: null } : null;
+	if (!project) return null;
+	// spawnData and renderSvg are derived outputs. Python normalizes/rebuilds them, so
+	// do not structured-clone several megabytes of derived data into the Worker.
+	const { spawnData: _spawnData, ...withoutDerived } = project;
+	return { ...withoutDerived, renderSvg: null };
 }
 
 function openDraftDatabase() {
@@ -1256,7 +1498,12 @@ function markWorkingCopyDirty(canonicalDelay = canonicalRenderDelayMs) {
 }
 
 async function checkpointWorkingCopy() {
-	if (!workingCopyDirty || !currentProjectId || !currentProject?.structure || !capability)
+	if (
+		!workingCopyDirty ||
+		!currentProjectId ||
+		!currentProject?.structure ||
+		(!capability && !browserPythonEnabled('checkpoint'))
+	)
 		return true;
 	if (checkpointPromise) {
 		await checkpointPromise;
@@ -1265,26 +1512,53 @@ async function checkpointWorkingCopy() {
 	const projectId = currentProjectId;
 	const clientRevision = Number(currentProject.clientRevision ?? 0);
 	const snapshot = compactProject(currentProject);
+	const requestId = newEditRequestId();
 	checkpointPromise = (async () => {
 		try {
-			const response = await fetch('/dungeon-editor/api/checkpoint', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json', 'X-Dungeongen-Capability': capability },
-				body: JSON.stringify({ project: snapshot })
-			});
-			const payload = await response.json().catch(() => null);
-			if (!response.ok || !payload?.success) throw new Error(payload?.error ?? 'editFailed');
+			let project = null;
+			if (browserPythonEnabled('checkpoint')) {
+				try {
+					const result = await callBrowserPython(
+						'checkpoint',
+						{ project: snapshot },
+						requestId
+					);
+					project = result?.project ?? null;
+				} catch (error) {
+					reportBrowserPythonFailure('checkpoint', error);
+					project = null;
+				}
+			}
+			if (!project) {
+				if (!capability) throw new Error('editFailed');
+				let startedAt = performance.now();
+				const response = await fetch('/dungeon-editor/api/checkpoint', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'X-Dungeongen-Capability': capability,
+						'X-Dungeongen-Request-Id': requestId
+					},
+					body: JSON.stringify({ project: snapshot })
+				});
+				logEditTime(requestId, 'checkpoint_fetch_until_headers', performance.now() - startedAt, 'checkpoint');
+				startedAt = performance.now();
+				const payload = await response.json().catch(() => null);
+				logEditTime(requestId, 'checkpoint_response_decode', performance.now() - startedAt, 'checkpoint');
+				if (!response.ok || !payload?.success) throw new Error(payload?.error ?? 'editFailed');
+				project = payload.project;
+			}
 			if (
 				currentProjectId !== projectId ||
 				Number(currentProject?.clientRevision ?? -1) !== clientRevision
 			)
 				return false;
 			const renderSvg = currentProject.renderSvg;
-			currentProject = { ...payload.project, renderSvg };
+			currentProject = { ...project, renderSvg };
 			pendingHostSaveRevision = clientRevision;
 			localStatus = 'statusSaving';
 			renderAll();
-			const needsPreview = !hostState.projects?.find((project) => project.id === projectId)
+			const needsPreview = !hostState.projects?.find((projectValue) => projectValue.id === projectId)
 				?.previewUrl;
 			await autosaveCurrent(null, needsPreview);
 			return true;
@@ -1541,7 +1815,8 @@ function workspaceDimensions() {
 }
 
 function activeMapElement() {
-	return elements.structureMap.hasAttribute('hidden') ? elements.mapImage : elements.structureMap;
+	if (!elements.structureMap.hasAttribute('hidden')) return elements.structureMap;
+	return hasBrowserCanvasImage() ? elements.browserRenderCanvas : elements.mapImage;
 }
 
 function mapPixel(cell) {
@@ -2036,7 +2311,8 @@ function renderDecorationCommitState(operation) {
 }
 
 function renderWorkspace() {
-	const hasReadyImage = Boolean(currentImageUrl && elements.mapImage.src);
+	const browserReady = hasBrowserCanvasImage();
+	const hasReadyImage = Boolean(browserReady || (currentImageUrl && elements.mapImage.src));
 	const structureActive = Boolean(
 		currentProject?.structure && ((fastMode && workspaceView === 'structure') || !hasReadyImage)
 	);
@@ -2049,13 +2325,14 @@ function renderWorkspace() {
 		String(fastMode && workspaceView === 'preview')
 	);
 	elements.structureMap.toggleAttribute('hidden', !structureActive);
-	elements.mapImage.hidden = structureActive;
+	elements.browserRenderCanvas.hidden = structureActive || !browserReady;
+	elements.mapImage.hidden = structureActive || browserReady;
 	elements.mapImageBuffer.hidden = true;
 	elements.structureOverlay.toggleAttribute('hidden', structureActive);
 	elements.mapSurface.classList.toggle('structure-view', structureActive);
 	if (currentProject?.structure) elements.emptyWorkspace.hidden = true;
 	if (structureActive) renderLightweightMap();
-	else if (currentProject?.renderSvg && !elements.mapImage.src)
+	else if (!browserReady && currentProject?.renderSvg && !elements.mapImage.src)
 		setProjectImage(currentProject.renderSvg, false, true);
 	syncEditOverlaySize();
 }
@@ -2077,6 +2354,7 @@ function setProjectImage(
 
 async function performProjectImageSwap(svg, fitOnLoad, force, timing, appearance) {
 	if (!svg) {
+		browserCanvasReady = false;
 		imageSwapSequence += 1;
 		imageSwapPending = false;
 		if (pendingImageUrl) URL.revokeObjectURL(pendingImageUrl);
@@ -2126,6 +2404,7 @@ async function performProjectImageSwap(svg, fitOnLoad, force, timing, appearance
 		currentImageUrl = nextUrl;
 		pendingImageUrl = '';
 		imageSwapPending = false;
+		browserCanvasReady = false;
 		if (previousUrl) {
 			URL.revokeObjectURL(previousUrl);
 			elements.mapImageBuffer.removeAttribute('src');
@@ -3119,9 +3398,19 @@ function applyLocalOperation(project, operation) {
 
 function structureNeedsRender(project = currentProject) {
 	const structure = project?.structure;
+	const browserReady = hasBrowserCanvasImage(project);
+	const hasRenderedImage = Boolean(
+		project?.renderSvg ||
+			browserReady ||
+			(project === currentProject && currentImageUrl && elements.mapImage.src)
+	);
+	const appearanceChanged = Boolean(
+		browserReady && browserCanvasAppearance !== browserAppearanceSignature(project)
+	);
 	return Boolean(
 		structure &&
-			(!project?.renderSvg ||
+			(!hasRenderedImage ||
+				appearanceChanged ||
 				Number(structure.renderedRevision ?? 0) !== Number(structure.revision ?? 0))
 	);
 }
@@ -3201,6 +3490,7 @@ function renderStructureOverlay() {
 	elements.structureOverlay.replaceChildren();
 	const structure = currentProject?.structure;
 	if (!structure || !structureNeedsRender()) return;
+	if (browserPythonEnabled('render') && hasBrowserCanvasImage()) return;
 	const currentFloor = new Set((structure.floorCells ?? []).map(cellKey));
 	const renderedFloor = new Set(
 		(structure.renderedFloorCells ?? structure.floorCells ?? []).map(cellKey)
@@ -3301,9 +3591,11 @@ function renderEditPreview(cells = [], tool = activeTool, validity = null) {
 
 async function makePreviewBase64() {
 	if (!currentProject?.structure) return '';
-	let source = elements.mapImage;
+	let source = hasBrowserCanvasImage() ? elements.browserRenderCanvas : elements.mapImage;
+	let sourceWidth = hasBrowserCanvasImage() ? browserCanvasWidth : source.naturalWidth;
+	let sourceHeight = hasBrowserCanvasImage() ? browserCanvasHeight : source.naturalHeight;
 	let temporaryUrl = '';
-	if (!source.naturalWidth || !source.naturalHeight) {
+	if (!sourceWidth || !sourceHeight) {
 		if (!elements.structureMap.childElementCount) renderLightweightMap();
 		const lightweight = elements.structureMap.cloneNode(true);
 		const style = svgElement('style');
@@ -3318,8 +3610,10 @@ async function makePreviewBase64() {
 		source = new Image();
 		source.src = temporaryUrl;
 		await source.decode().catch(() => undefined);
+		sourceWidth = source.naturalWidth;
+		sourceHeight = source.naturalHeight;
 	}
-	if (!source.naturalWidth || !source.naturalHeight) {
+	if (!sourceWidth || !sourceHeight) {
 		if (temporaryUrl) URL.revokeObjectURL(temporaryUrl);
 		return '';
 	}
@@ -3329,12 +3623,9 @@ async function makePreviewBase64() {
 	const context = canvas.getContext('2d');
 	context.fillStyle = normalizeAppearance(currentProject.appearance).background;
 	context.fillRect(0, 0, previewSizePixels, previewSizePixels);
-	const ratio = Math.min(
-		previewSizePixels / source.naturalWidth,
-		previewSizePixels / source.naturalHeight
-	);
-	const width = source.naturalWidth * ratio;
-	const height = source.naturalHeight * ratio;
+	const ratio = Math.min(previewSizePixels / sourceWidth, previewSizePixels / sourceHeight);
+	const width = sourceWidth * ratio;
+	const height = sourceHeight * ratio;
 	context.drawImage(
 		source,
 		(previewSizePixels - width) / 2,
@@ -3357,9 +3648,11 @@ async function autosaveCurrent(timing = null, includePreview = true) {
 	timing?.('autosave_project_prepare', performance.now() - startedAt);
 	let previewBase64 = '';
 	if (includePreview && currentProjectId === projectId) {
-		startedAt = performance.now();
-		await elements.mapImage.decode().catch(() => undefined);
-		timing?.('image_decode', performance.now() - startedAt);
+		if (!hasBrowserCanvasImage()) {
+			startedAt = performance.now();
+			await elements.mapImage.decode().catch(() => undefined);
+			timing?.('image_decode', performance.now() - startedAt);
+		}
 		startedAt = performance.now();
 		previewBase64 = await makePreviewBase64();
 		timing?.('autosave_preview', performance.now() - startedAt);
@@ -3387,26 +3680,53 @@ async function renderCanonicalProject(
 	persistPreview = false
 ) {
 	const requestId = newEditRequestId();
-	const timing = (stage, elapsedMs) => logEditTime(requestId, `canonical_${stage}`, elapsedMs);
+	const timing = (stage, elapsedMs) =>
+		logEditTime(requestId, `canonical_${stage}`, elapsedMs, 'render');
 	try {
-		let startedAt = performance.now();
-		const body = JSON.stringify({ project: projectForEdit() });
-		timing('request_serialization', performance.now() - startedAt);
-		startedAt = performance.now();
-		const response = await fetch('/dungeon-editor/api/render', {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'X-Dungeongen-Capability': capability,
-				'X-Dungeongen-Request-Id': requestId
-			},
-			body
-		});
-		timing('fetch_until_headers', performance.now() - startedAt);
-		startedAt = performance.now();
-		const payload = await response.json().catch(() => null);
-		timing('response_decode', performance.now() - startedAt);
-		if (!response.ok || !payload?.success) throw new Error(payload?.error ?? 'editFailed');
+		const projectSnapshot = projectForEdit();
+		let nextProject = null;
+		let browserRendered = false;
+		let browserResult = null;
+
+		if (browserPythonEnabled('render')) {
+			try {
+				browserResult = await callBrowserPython(
+					'render',
+					{ project: projectSnapshot },
+					requestId
+				);
+				nextProject = browserResult?.project ?? null;
+				browserRendered = Boolean(nextProject);
+			} catch (error) {
+				reportBrowserPythonFailure('render', error);
+				nextProject = null;
+				browserRendered = false;
+			}
+		}
+
+		if (!nextProject) {
+			if (!capability) throw new Error('editFailed');
+			let startedAt = performance.now();
+			const body = JSON.stringify({ project: projectSnapshot });
+			timing('request_serialization', performance.now() - startedAt);
+			startedAt = performance.now();
+			const response = await fetch('/dungeon-editor/api/render', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-Dungeongen-Capability': capability,
+					'X-Dungeongen-Request-Id': requestId
+				},
+				body
+			});
+			timing('fetch_until_headers', performance.now() - startedAt);
+			startedAt = performance.now();
+			const payload = await response.json().catch(() => null);
+			timing('response_decode', performance.now() - startedAt);
+			if (!response.ok || !payload?.success) throw new Error(payload?.error ?? 'editFailed');
+			nextProject = payload.project;
+		}
+
 		if (
 			sequence !== canonicalRenderSequence ||
 			currentProjectId !== projectId ||
@@ -3414,17 +3734,28 @@ async function renderCanonicalProject(
 			Number(currentProject?.clientRevision ?? -1) !== clientRevision
 		)
 			return false;
+
 		const appearance = currentProject.appearance;
-		const nextProject = { ...payload.project, appearance };
-		const imageReady = await setProjectImage(
-			nextProject.renderSvg,
-			false,
-			workspaceView === 'preview',
-			timing,
-			nextProject.appearance
-		);
+		nextProject = { ...nextProject, appearance };
+		if (browserRendered) {
+			browserCanvasReady = true;
+			browserCanvasProjectId = projectId;
+			browserCanvasWidth = Number(browserResult?.width || 0);
+			browserCanvasHeight = Number(browserResult?.height || 0);
+			browserCanvasAppearance = browserAppearanceSignature(nextProject);
+			elements.emptyWorkspace.hidden = true;
+		} else {
+			browserCanvasReady = false;
+			const imageReady = await setProjectImage(
+				nextProject.renderSvg,
+				false,
+				workspaceView === 'preview',
+				timing,
+				nextProject.appearance
+			);
+			if (!imageReady) return false;
+		}
 		if (
-			!imageReady ||
 			sequence !== canonicalRenderSequence ||
 			currentProjectId !== projectId ||
 			Number(currentProject?.structure?.revision ?? -1) !== revision ||
@@ -3473,12 +3804,11 @@ function scheduleCanonicalRender(delay = canonicalRenderDelayMs) {
 
 async function ensureCanonicalProject({ persistPreview = true } = {}) {
 	if (!currentProjectId || !currentProject?.structure) return false;
-	if (!structureNeedsRender() && currentProject.renderSvg) {
+	if (!structureNeedsRender()) {
+		if (hasBrowserCanvasImage()) return true;
 		if (imageSwapPending && pendingImageSwapPromise) await pendingImageSwapPromise;
-		if (!currentImageUrl || !elements.mapImage.src) {
-			return setProjectImage(currentProject.renderSvg, false, true);
-		}
-		return true;
+		if (currentImageUrl && elements.mapImage.src) return true;
+		if (currentProject.renderSvg) return setProjectImage(currentProject.renderSvg, false, true);
 	}
 	cancelCanonicalRender();
 	const projectId = currentProjectId;
@@ -3501,6 +3831,7 @@ async function restoreHistory(nextProject, destination) {
 	if (destination.length > maxHistoryEntries) destination.shift();
 	const nextClientRevision = Number(currentProject?.clientRevision ?? 0) + 1;
 	currentProject = { ...cloneProject(nextProject), clientRevision: nextClientRevision };
+	browserCanvasReady = false;
 	refreshProjectSpawnData(currentProject);
 	refreshPendingDecorationObjects();
 	writeParameters(currentProject.parameters);
@@ -3532,33 +3863,104 @@ async function commitStructure(operation) {
 		operation.objectId = currentPlacementObjectId();
 	const requestId = newEditRequestId();
 	const totalStartedAt = performance.now();
-	const timing = (stage, elapsedMs) => logEditTime(requestId, stage, elapsedMs);
-	const previous = decorationOperation ? currentProject : cloneProject();
-	const startedAt = performance.now();
-	const next = applyLocalOperation(currentProject, operation);
-	if (!next) {
+	const timing = (stage, elapsedMs) => {
+		logEditTime(requestId, stage, elapsedMs);
+		logBrowserPythonTime(requestId, 'edit-ui', stage, elapsedMs, 'browser-ui', {
+			action: operation.type
+		});
+	};
+	const previous = currentProject;
+	const historySnapshot = cloneProject();
+	const previousRenderSvg = previous?.renderSvg ?? null;
+	const previousClientRevision = Number(previous?.clientRevision ?? 0);
+	let next = null;
+	let browserRendered = false;
+	let browserResult = null;
+	let pythonApplied = false;
+	editing = true;
+	try {
+		if (browserPythonEnabled('editRender') && !(fastMode && workspaceView === 'structure')) {
+			try {
+				const startedAt = performance.now();
+				browserResult = await callBrowserPython(
+					'editRender',
+					{ project: projectForEdit(previous), operation, deferRender: true },
+					requestId
+				);
+				next = browserResult?.project ?? null;
+				browserRendered = Boolean(next);
+				pythonApplied = Boolean(next);
+				timing('client_python_edit_render', performance.now() - startedAt);
+			} catch (error) {
+				reportBrowserPythonFailure('editRender', error);
+				next = null;
+				browserRendered = false;
+			}
+		}
+		if (!next && browserPythonEnabled('edit')) {
+			try {
+				const startedAt = performance.now();
+				const result = await callBrowserPython(
+					'edit',
+					{ project: projectForEdit(previous), operation, deferRender: true },
+					requestId
+				);
+				next = result?.project ?? null;
+				pythonApplied = Boolean(next);
+				timing('client_python_apply', performance.now() - startedAt);
+			} catch (error) {
+				reportBrowserPythonFailure('edit', error);
+				next = null;
+			}
+		}
+		if (!next) {
+			const startedAt = performance.now();
+			next = applyLocalOperation(previous, operation);
+			timing('client_fallback_apply', performance.now() - startedAt);
+		}
+		if (!next) throw new Error('editFailed');
+		next = {
+			...next,
+			renderSvg: browserRendered ? null : previousRenderSvg,
+			clientRevision: previousClientRevision + 1
+		};
+		if (!pythonApplied) {
+			const startedAt = performance.now();
+			refreshProjectSpawnData(next);
+			timing('client_spawn_data_refresh', performance.now() - startedAt);
+		}
+		currentProject = next;
+		if (browserRendered) {
+			browserCanvasReady = true;
+			browserCanvasProjectId = currentProjectId;
+			browserCanvasWidth = Number(browserResult?.width || 0);
+			browserCanvasHeight = Number(browserResult?.height || 0);
+			browserCanvasAppearance = browserAppearanceSignature(next);
+			pendingClassificationCells.clear();
+			setRenderedDecorationObjects(next);
+		}
+		if (decorationOperation) reusePlacementIndexAfterDecoration(previous, next);
+		if (!browserRendered && operation.type === 'toggleRoom' && Array.isArray(operation.cell))
+			pendingClassificationCells.add(cellKey(operation.cell));
+		if (decorationOperation && !browserRendered) refreshPendingDecorationObjects();
+		pushHistory(historySnapshot);
+		writeParameters(currentProject.parameters);
+		writeAppearance(currentProject.appearance, { preservePaletteSelection: true });
+		localStatus = 'statusUnsaved';
+		markWorkingCopyDirty(
+			decorationOperation ? Math.min(canonicalRenderDelayMs, 750) : canonicalRenderDelayMs
+		);
+		renderEditPreview();
+	} catch {
 		localStatus = 'errorEditFailed';
-		renderAll();
-		return;
+	} finally {
+		editing = false;
+		if (browserRendered) renderAll();
+		else if (decorationOperation && currentProject !== previous)
+			renderDecorationCommitState(operation);
+		else renderAll();
+		timing('browser_total', performance.now() - totalStartedAt);
 	}
-	refreshProjectSpawnData(next);
-	currentProject = next;
-	if (decorationOperation) reusePlacementIndexAfterDecoration(previous, next);
-	if (operation.type === 'toggleRoom' && Array.isArray(operation.cell))
-		pendingClassificationCells.add(cellKey(operation.cell));
-	if (decorationOperation) refreshPendingDecorationObjects();
-	pushHistory(previous);
-	writeParameters(currentProject.parameters);
-	writeAppearance(currentProject.appearance, { preservePaletteSelection: true });
-	timing('client_operation', performance.now() - startedAt);
-	localStatus = 'statusUnsaved';
-	markWorkingCopyDirty(
-		decorationOperation ? Math.min(canonicalRenderDelayMs, 750) : canonicalRenderDelayMs
-	);
-	renderEditPreview();
-	if (decorationOperation) renderDecorationCommitState(operation);
-	else renderAll();
-	timing('browser_total', performance.now() - totalStartedAt);
 }
 
 let loadingProgress = 0;
@@ -3613,7 +4015,7 @@ function stopGenerationProgress() {
 
 async function initializeProjectStructure() {
 	if (
-		!capability ||
+		(!capability && !browserPythonEnabled('edit')) ||
 		!currentProjectId ||
 		!currentProject?.renderSvg ||
 		!currentProject?.layout ||
@@ -3625,32 +4027,56 @@ async function initializeProjectStructure() {
 	if (!needsStructure && !needsObjects) return;
 	const projectId = currentProjectId;
 	const project = cloneProject();
+	const previousRenderSvg = currentProject.renderSvg;
+	const requestId = newEditRequestId();
+	const operation = { type: needsStructure ? 'initialize' : 'initializeObjects' };
 	editing = true;
 	localStatus = 'statusEditing';
 	showLoading('preparingEditor', 12);
 	setLoadingProgress(36);
 	renderAll();
 	try {
-		const response = await fetch('/dungeon-editor/api/edit', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json', 'X-Dungeongen-Capability': capability },
-			body: JSON.stringify({
-				project: projectForEdit(project),
-				operation: { type: needsStructure ? 'initialize' : 'initializeObjects' },
-				deferRender: !needsStructure
-			})
-		});
-		const payload = await response.json().catch(() => null);
-		if (!response.ok || !payload?.success) throw new Error(payload?.error ?? 'editFailed');
+		let nextProject = null;
+		if (browserPythonEnabled('edit')) {
+			try {
+				const result = await callBrowserPython(
+					'edit',
+					{ project: projectForEdit(project), operation, deferRender: true },
+					requestId
+				);
+				nextProject = result?.project ?? null;
+			} catch (error) {
+				reportBrowserPythonFailure('edit', error, 'initialize-project');
+				nextProject = null;
+			}
+		}
+		if (!nextProject) {
+			if (!capability) throw new Error('editFailed');
+			const response = await fetch('/dungeon-editor/api/edit', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-Dungeongen-Capability': capability,
+					'X-Dungeongen-Request-Id': requestId
+				},
+				body: JSON.stringify({
+					project: projectForEdit(project),
+					operation,
+					deferRender: true
+				})
+			});
+			const payload = await response.json().catch(() => null);
+			if (!response.ok || !payload?.success) throw new Error(payload?.error ?? 'editFailed');
+			nextProject = payload.project;
+		}
 		if (currentProjectId !== projectId) return;
-		const renderedSvg = payload.project.renderSvg ?? currentProject.renderSvg;
 		currentProject = {
-			...payload.project,
-			renderSvg: renderedSvg,
+			...nextProject,
+			renderSvg: previousRenderSvg,
 			clientRevision: Number(currentProject.clientRevision ?? 0) + 1
 		};
 		setRenderedDecorationObjects(currentProject);
-		setProjectImage(currentProject.renderSvg, false);
+		if (currentProject.renderSvg) setProjectImage(currentProject.renderSvg, false);
 		workingCopyDirty = true;
 		void persistWorkingDraft();
 		localStatus = 'statusUnsaved';
@@ -3676,7 +4102,7 @@ async function generate() {
 	if (appearanceUpdateTimer) {
 		clearTimeout(appearanceUpdateTimer);
 		appearanceUpdateTimer = null;
-		if (currentProject?.renderSvg)
+		if (currentProject?.structure)
 			currentProject.appearance = normalizeAppearance(readAppearance());
 	}
 	pendingAppearanceSnapshot = null;
@@ -3860,7 +4286,6 @@ async function setWorkspaceView(view) {
 	renderEditPreview();
 	if (view === 'structure') {
 		cancelCanonicalRender();
-		setProjectImage(currentProject?.renderSvg, false);
 		renderAll();
 		fitMap();
 		return;
@@ -3880,9 +4305,8 @@ function setFastMode(enabled) {
 	} catch {}
 	if (enabled) {
 		cancelCanonicalRender();
-		setProjectImage(currentProject?.renderSvg, false);
 	} else {
-		setProjectImage(currentProject?.renderSvg, false, true);
+		if (currentProject?.renderSvg) setProjectImage(currentProject.renderSvg, false, true);
 		if (structureNeedsRender()) scheduleCanonicalRender();
 	}
 	renderAll();
@@ -3890,7 +4314,7 @@ function setFastMode(enabled) {
 }
 
 async function saveAppearance() {
-	if (!currentProjectId || !currentProject?.renderSvg) return;
+	if (!currentProjectId || !currentProject?.structure) return;
 	localStatus = 'statusSaving';
 	renderAll();
 	await autosaveCurrent(null, !(fastMode && workspaceView === 'structure'));
@@ -4107,7 +4531,7 @@ async function exportCurrentProject() {
 	if (!(await ensureCanonicalProject({ persistPreview: false }))) return;
 	localStatus = 'statusExporting';
 	renderAll();
-	await elements.mapImage.decode().catch(() => undefined);
+	if (!hasBrowserCanvasImage()) await elements.mapImage.decode().catch(() => undefined);
 	const projectId = currentProjectId;
 	const project = currentProject;
 	const previewBase64 = await makePreviewBase64();
@@ -4130,7 +4554,7 @@ async function printProject(project) {
 	if (!currentProject?.structure) return;
 	if (!(await checkpointWorkingCopy())) return;
 	if (!(await ensureCanonicalProject({ persistPreview: false }))) return;
-	await elements.mapImage.decode().catch(() => undefined);
+	if (!hasBrowserCanvasImage()) await elements.mapImage.decode().catch(() => undefined);
 	const previewBase64 = await makePreviewBase64();
 	send('dungeongen:print', {
 		projectId: currentProjectId,
@@ -4423,6 +4847,7 @@ window.addEventListener('message', (event) => {
 });
 
 void Promise.all([loadEditorConfig(), loadColorPresets(), loadLocale(fallbackLocale)]).then(() => {
+	if (browserPythonConfig?.enabled) void ensurePythonWorker().catch(() => undefined);
 	initializeAppSelects();
 	renderColorPresetOptions();
 	if (periodicCheckpointTimer) clearInterval(periodicCheckpointTimer);

@@ -1,8 +1,12 @@
 """Logging configuration for the dungeon generator."""
 
 import logging
-from rich.console import Console
-from rich.logging import RichHandler
+try:
+    from rich.console import Console
+    from rich.logging import RichHandler
+except ImportError:  # Pyodide browser core keeps logging dependency-free.
+    Console = None
+    RichHandler = None
 from enum import Flag, auto
 from typing import Set
 
@@ -31,21 +35,25 @@ class DungeonLogger:
     
     def __init__(self):
         if not DungeonLogger._initialized:
-            # Set up rich console and handler
-            console = Console(width=200)  # Increase width to prevent wrapping
-            rich_handler = RichHandler(
-                console=console,
-                rich_tracebacks=True,
-                markup=True,
-                show_path=False,
-                show_time=False
-            )
-            rich_handler.setFormatter(logging.Formatter('%(message)s'))
-            
+            # Rich is optional in the browser/Pyodide runtime. Native service keeps
+            # the existing RichHandler when the dependency is installed.
+            if RichHandler is not None and Console is not None:
+                console = Console(width=200)  # Increase width to prevent wrapping
+                handler = RichHandler(
+                    console=console,
+                    rich_tracebacks=True,
+                    markup=True,
+                    show_path=False,
+                    show_time=False
+                )
+            else:
+                handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter('%(message)s'))
+
             # Configure root logger
             self.logger = logging.getLogger('dungeon')
             self.logger.setLevel(logging.INFO)
-            self.logger.addHandler(rich_handler)
+            self.logger.addHandler(handler)
             
             # Initialize enabled tags
             self.enabled_tags: Set[LogTags] = set()

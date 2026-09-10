@@ -12,6 +12,31 @@
 	"logging": {
 		"EDITING_LOGGING": false,
 		"EDIT_TIME_LOGGING": false,
-		"THEME_SAVE_LOGGING": true
+		"THEME_SAVE_LOGGING": true,
+		"BROWSER_PYTHON_TIME_LOGGING": true
+	},
+	"browserPython": {
+		"enabled": true,
+		"pyodideBaseUrl": "/dungeon-editor/vendor/pyodide-314.0.6/",
+		"canvasKitModuleUrl": "/dungeon-editor/vendor/canvaskit-0.42.0/canvaskit.mjs",
+		"canvasKitWasmUrl": "/dungeon-editor/vendor/canvaskit-0.42.0/canvaskit.wasm",
+		"operations": {
+			"edit": true,
+			"checkpoint": true,
+			"render": true
+		},
+		"renderStages": {
+			"render_background": true,
+			"render_crosshatch": true,
+			"render_region_base": true,
+			"render_region_shadows": true,
+			"render_region_grid": true,
+			"render_region_water": true,
+			"render_region_props": true,
+			"render_borders": true,
+			"render_overlays": true,
+			"render_text": true,
+			"room_numbers": true
+		}
 	}
 }

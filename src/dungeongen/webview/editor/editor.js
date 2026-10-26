@@ -2019,10 +2019,14 @@ function appendLightweightObject(parent, object, extraClass = '') {
 			})
 		);
 	} else if (object.type === 'coffin') {
-		const x = cx - bounds.width * 0.35;
-		const y = cy - bounds.height * 0.45;
-		const width = bounds.width * 0.7;
-		const height = bounds.height * 0.9;
+		// Cells describe the rotated footprint; the SVG group applies the rotation itself.
+		const [baseWidth, baseHeight] = rotation % 2
+			? [bounds.height, bounds.width]
+			: [bounds.width, bounds.height];
+		const x = cx - baseWidth * 0.35;
+		const y = cy - baseHeight * 0.45;
+		const width = baseWidth * 0.7;
+		const height = baseHeight * 0.9;
 		const insetX = width * 0.1;
 		const insetY = height * 0.1;
 		const outer = [

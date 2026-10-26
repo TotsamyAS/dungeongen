@@ -31,10 +31,13 @@ class Coffin(Prop):
         if layer != Layers.PROPS:
             return
 
-        """Draw the coffin shape."""
+        # Prop.draw already rotates the canvas; recover the unrotated local size.
+        width, height = bounds.width, bounds.height
+        if self.rotation in (Rotation.ROT_90, Rotation.ROT_270):
+            width, height = height, width
         # Calculate points for outer coffin shape
-        x, y = bounds.x + bounds.width * 0.15, bounds.y + bounds.height * 0.05
-        w, h = bounds.width * 0.7, bounds.height * 0.9
+        x, y = -width * 0.35, -height * 0.45
+        w, h = width * 0.7, height * 0.9
         
         # Create outer coffin path
         outer_path = skia.Path()

@@ -641,7 +641,15 @@ async function loadEditorConfig() {
 		});
 		if (!response.ok) return;
 		const config = await response.json();
-		const configuredCellSize = Number(config?.gridSizePixels);
+		for(const option of elements.fields.size.options) {
+ const limit=Number(config?.generationLimits?.[option.value]);
+ if(Number.isInteger(limit)&&limit>0) {
+  const labelKey=option.dataset.label;
+  option.dataset.limit=String(limit);
+  option.textContent=t('sizeWithLimit',{name:t(labelKey),limit});
+ }
+ }
+ const configuredCellSize = Number(config?.gridSizePixels);
 		const configuredPaddingCells = Number(config?.canvasPaddingCells);
 		if (Number.isInteger(configuredCellSize) && configuredCellSize > 0) {
 			cellSize = configuredCellSize;
@@ -726,7 +734,7 @@ async function loadLocale(locale) {
 
 function applyLabels() {
 	document.querySelectorAll('[data-label]').forEach((element) => {
-		element.textContent = t(element.dataset.label);
+		element.textContent = element.dataset.limit ? t('sizeWithLimit',{name:t(element.dataset.label),limit:element.dataset.limit}) : t(element.dataset.label);
 	});
 	document.querySelectorAll('[data-label-placeholder]').forEach((element) => {
 		element.setAttribute('placeholder', t(element.dataset.labelPlaceholder));

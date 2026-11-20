@@ -243,5 +243,6 @@
 	"atmosphere_edges": "Сильнее по краям",
 	"atmosphere_uniform": "Равномерно",
 	"deleteConfirmTitle": "Подтвердите удаление",
-	"confirmDelete": "Удалить"
+	"confirmDelete": "Удалить",
+	"sizeWithLimit": "{name} · до {limit}×{limit} клеток"
 }

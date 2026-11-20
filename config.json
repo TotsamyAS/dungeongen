@@ -38,5 +38,12 @@
 			"render_text": true,
 			"room_numbers": true
 		}
+	},
+	"generationLimits": {
+		"tiny": 32,
+		"small": 48,
+		"medium": 64,
+		"large": 96,
+		"xlarge": 128
 	}
 }

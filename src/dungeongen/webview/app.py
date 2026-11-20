@@ -166,6 +166,7 @@ def _public_editor_config() -> dict[str, Any]:
     if isinstance(raw_theme_save_timeout, bool) or not isinstance(raw_theme_save_timeout, (int, float)):
         raw_theme_save_timeout = DEFAULT_THEME_SAVE_TIMEOUT_MS
     return {
+        "generationLimits": value.get("generationLimits", {}),
         "colorApplyDelayMs": max(0, min(5000, int(raw_delay))),
         "canonicalRenderDelayMs": max(0, min(60_000, int(raw_render_delay))),
         "previewSizePixels": max(32, min(256, int(raw_preview_size))),
@@ -291,6 +292,7 @@ def pyodide_skia() -> Response:
 def _python_core_zip() -> bytes:
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+        archive.writestr("config.json", json.dumps({"generationLimits": _service_config().get("generationLimits", {})}))
         for path in sorted(PYTHON_CORE_ROOT.rglob("*")):
             if not path.is_file():
                 continue

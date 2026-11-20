@@ -60,7 +60,7 @@ EditTimingCallback = Callable[[str, float], None]
 
 DEFAULT_PARAMETERS: dict[str, Any] = {
     "size": "medium",
-    "symmetry": "bilateral",
+    "symmetry": "none",
     "cross": "med",
     "pack": "normal",
     "roomSize": "mixed",
@@ -299,7 +299,7 @@ def _generation_params(parameters: dict[str, Any]) -> tuple[GenerationParams, fl
 
     params.density = {"sparse": 0.2, "normal": 0.5, "tight": 0.8}[parameters["pack"]]
     params.room_size_bias = {"cozy": -1.0, "mixed": 0.0, "grand": 0.8}[parameters["roomSize"]]
-    params.round_room_chance = 0.3 if parameters["roundRooms"] else 0.05
+    params.round_room_chance = 0.3 if parameters["roundRooms"] else 0.0
     params.hall_chance = 0.15 if parameters["halls"] else 0.0
 
     cross = parameters["cross"]
@@ -310,7 +310,7 @@ def _generation_params(parameters: dict[str, Any]) -> tuple[GenerationParams, fl
         "high": (0.5, 0.4, 0.3),
     }[cross]
     params.passage_width = 1
-    params.symmetry_break = 0.2
+    params.symmetry_break = 0.0
 
     water_depth = WATER_DEPTH_MAP[parameters["water"]]
     params.water_enabled = water_depth > 0
@@ -458,7 +458,9 @@ def _canvas_dimensions(dungeon: Dungeon, grid_size: int, padding: int | None) ->
     bounds = dungeon.bounds
     width_cells = bounds[2] - bounds[0]
     height_cells = bounds[3] - bounds[1]
-    if width_cells <= 0 or height_cells <= 0 or width_cells > 60 or height_cells > 60:
+    from .generation_policy import generation_limit
+    max_cells = generation_limit('xlarge') - CANVAS_PADDING_CELLS * 2
+    if width_cells <= 0 or height_cells <= 0 or width_cells > max_cells or height_cells > max_cells:
         raise ProjectValidationError("renderBounds")
     return (
         width_cells * grid_size + resolved_padding * 2,
@@ -930,7 +932,9 @@ def _project_canvas_dimensions(
     bounds = project["structure"]["mapBounds"]
     width_cells = bounds[2] - bounds[0]
     height_cells = bounds[3] - bounds[1]
-    if width_cells <= 0 or height_cells <= 0 or width_cells > 60 or height_cells > 60:
+    from .generation_policy import generation_limit
+    max_cells = generation_limit('xlarge') - CANVAS_PADDING_CELLS * 2
+    if width_cells <= 0 or height_cells <= 0 or width_cells > max_cells or height_cells > max_cells:
         raise ProjectValidationError("renderBounds")
     return (
         width_cells * grid_size + resolved_padding * 2,
@@ -971,8 +975,8 @@ def render_project_svg(
 
 def _generate_dungeon(parameters: dict[str, Any]) -> tuple[Dungeon, list[Any], str]:
     params, _ = _generation_params(parameters)
-    generator = DungeonGenerator(params)
-    dungeon = generator.generate(seed=parameters["seed"])
+    from .generation_policy import generate_constrained
+    dungeon = generate_constrained(params, parameters["seed"], parameters["size"])
     violations: list[Any] = []
     validation = ""
     if parameters["pack"] != "tight":

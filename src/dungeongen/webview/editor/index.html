@@ -728,6 +728,20 @@
 			<span></span>
 		</div>
 
+		<dialog id="deleteConfirmDialog" class="editor-dialog confirm-dialog" aria-labelledby="deleteConfirmTitle" aria-describedby="deleteConfirmMessage">
+			<form method="dialog" class="dialog-card">
+				<header>
+					<h2 id="deleteConfirmTitle" data-label="deleteConfirmTitle"></h2>
+					<button class="dialog-close" value="cancel" data-label-aria="close" aria-label="">×</button>
+				</header>
+				<p id="deleteConfirmMessage" class="muted"></p>
+				<div class="modal-actions">
+					<button class="ui-button" value="cancel" data-label="cancel" autofocus></button>
+					<button class="ui-button danger" value="delete" data-label="confirmDelete"></button>
+				</div>
+			</form>
+		</dialog>
+
 		<dialog id="renameProjectDialog" class="editor-dialog confirm-dialog">
 			<form id="renameProjectForm" class="dialog-card">
 				<header>

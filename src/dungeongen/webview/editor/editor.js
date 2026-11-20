@@ -1746,8 +1746,8 @@ function renderProjects() {
 		remove.className = 'ui-button danger icon-only project-delete';
 		remove.innerHTML = icon('trash');
 		setControlLabel(remove, t('deleteProject'));
-		remove.addEventListener('click', () => {
-			if (window.confirm(t('deleteConfirm', { name: project.name }))) {
+		remove.addEventListener('click', async () => {
+			if (await confirmDeletion(t('deleteConfirm', { name: project.name }))) {
 				send('dungeongen:project-delete', { projectId: project.id });
 			}
 		});
@@ -4389,10 +4389,11 @@ function savePaletteTheme() {
 	renderPaletteThemeControls();
 }
 
-function deletePaletteTheme() {
+async function deletePaletteTheme() {
 	const preset = selectedCustomPreset();
 	if (!preset || themeSaving) return;
-	if (!window.confirm(t('paletteDeleteConfirm', { name: preset.name }))) return;
+	if (!(await confirmDeletion(t('paletteDeleteConfirm', { name: preset.name })))) return;
+	if (themeSaving || !hostState.customThemes?.some(theme => theme.id === preset.id)) return;
 	themeSaving = true;
 	themeStatusKey = 'paletteThemeSaving';
 	themeStatusError = false;
@@ -4961,4 +4962,15 @@ function closeDeletedProject() {
  setProjectImage(null);applyDungeonAtmosphere();
  if(deletedId) void deleteWorkingDraft(deletedId);
  hideLoading();renderAll();activateTool('projects');
+}
+
+function confirmDeletion(message) {
+ const dialog = document.getElementById('deleteConfirmDialog');
+ if (dialog.open) return Promise.resolve(false);
+ document.getElementById('deleteConfirmMessage').textContent = message;
+ dialog.returnValue = 'cancel';
+ return new Promise(resolve => {
+  dialog.addEventListener('close', () => resolve(dialog.returnValue === 'delete'), {once: true});
+  dialog.showModal();
+ });
 }

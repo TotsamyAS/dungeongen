@@ -2605,3 +2605,76 @@ textarea,
 :root[data-theme='light'] #openGeneration.ui-button.primary:disabled {
 	opacity: 0.72;
 }
+
+.dungeon-atmosphere-controls { display: grid; gap: 8px; margin-top: 12px; border: 0; padding: 0; min-width: 0; }
+.dungeon-atmosphere-controls select, .dungeon-atmosphere-controls input { width: 100%; min-width: 0; }
+
+.dungeon-atmosphere-presets { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; }
+.dungeon-atmosphere-presets button { display: flex; flex-direction: column; padding: 3px; min-width: 0; gap: 3px; }
+.dungeon-atmosphere-presets canvas { width: 100%; height: 30px; object-fit: cover; }
+.dungeon-atmosphere-presets small { font-size: 10px; white-space: normal; }
+
+.dungeon-atmosphere-layer { pointer-events: none; background: transparent; border: 0; box-shadow: none; }
+
+/* Shared application range styling, mirrored for the isolated editor iframe. */
+input[type='range'] {
+	width: 100%;
+	height: 18px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	color: inherit;
+	background: transparent;
+	box-shadow: none;
+	accent-color: var(--gold);
+	cursor: pointer;
+	appearance: none;
+	-webkit-appearance: none;
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+	height: 6px;
+	border: 1px solid rgba(245, 184, 75, 0.24);
+	border-radius: 999px;
+	background: linear-gradient(90deg, rgba(125, 48, 43, 0.88), rgba(245, 184, 75, 0.72));
+}
+
+input[type='range']::-webkit-slider-thumb {
+	width: 16px;
+	height: 16px;
+	margin-top: -6px;
+	border: 1px solid rgba(255, 242, 201, 0.8);
+	border-radius: 50%;
+	background: var(--gold);
+	box-shadow: 0 0 0 4px rgba(245, 184, 75, 0.16);
+	-webkit-appearance: none;
+}
+
+input[type='range']::-moz-range-track {
+	height: 6px;
+	border: 1px solid rgba(245, 184, 75, 0.24);
+	border-radius: 999px;
+	background: linear-gradient(90deg, rgba(125, 48, 43, 0.88), rgba(245, 184, 75, 0.72));
+}
+
+input[type='range']::-moz-range-thumb {
+	width: 16px;
+	height: 16px;
+	border: 1px solid rgba(255, 242, 201, 0.8);
+	border-radius: 50%;
+	background: var(--gold);
+	box-shadow: 0 0 0 4px rgba(245, 184, 75, 0.16);
+}
+
+input[type='range']:hover::-webkit-slider-thumb {
+	box-shadow:
+		0 0 0 5px rgba(245, 184, 75, 0.2),
+		0 0 18px rgba(216, 139, 53, 0.34);
+}
+
+input[type='range']:hover::-moz-range-thumb {
+	box-shadow:
+		0 0 0 5px rgba(245, 184, 75, 0.2),
+		0 0 18px rgba(216, 139, 53, 0.34);
+}

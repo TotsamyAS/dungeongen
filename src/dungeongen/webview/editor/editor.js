@@ -1221,6 +1221,7 @@ function styledSvg(template, appearanceValue) {
 }
 
 function writeAppearance(value, { preservePaletteSelection = false } = {}) {
+ void syncAtmosphere();
 	const appearance = normalizeAppearance(value);
 	for (const [key, input] of Object.entries(elements.colors)) input.value = appearance[key];
 	if (!preservePaletteSelection) setPaletteNameFromAppearance(appearance);
@@ -2315,6 +2316,7 @@ function renderDecorationCommitState(operation) {
 }
 
 function renderWorkspace() {
+ applyDungeonAtmosphere();
 	const browserReady = hasBrowserCanvasImage();
 	const hasReadyImage = Boolean(browserReady || (currentImageUrl && elements.mapImage.src));
 	const structureActive = Boolean(
@@ -3740,7 +3742,7 @@ async function renderCanonicalProject(
 			return false;
 
 		const appearance = currentProject.appearance;
-		nextProject = { ...nextProject, appearance };
+		nextProject = { ...nextProject, appearance, atmosphere: currentProject.atmosphere };
 		if (browserRendered) {
 			browserCanvasReady = true;
 			browserCanvasProjectId = projectId;
@@ -4225,6 +4227,7 @@ function applyHostState(next) {
 	const previousThemes = JSON.stringify(hostState.customThemes ?? []);
 	hostState = { ...hostState, ...(next ?? {}) };
 	capability = typeof hostState.capability === 'string' ? hostState.capability : capability;
+	if(currentProjectId && Array.isArray(hostState.projects) && !hostState.projects.some(project=>project.id===currentProjectId)) closeDeletedProject();
 	if (hostState.statusCode || hostState.errorCode) localStatus = '';
 	if (hostState.theme === 'light' || hostState.theme === 'dark') {
 		applyTheme(hostState.theme, { persist: false });
@@ -4835,6 +4838,7 @@ window.addEventListener('pagehide', () => {
 });
 window.addEventListener('message', (event) => {
 	if (event.source !== window.parent || !event.data || typeof event.data !== 'object') return;
+	if (event.data.type === 'dungeongen:close') closeDeletedProject();
 	if (event.data.type === 'dungeongen:host-state') {
 		void loadLocale(String(event.data.locale ?? fallbackLocale));
 		applyHostState({ ...event.data.state, theme: event.data.theme });
@@ -4862,3 +4866,99 @@ void Promise.all([loadEditorConfig(), loadColorPresets(), loadLocale(fallbackLoc
 	renderAll();
 	send('dungeongen:ready');
 });
+
+let atmospherePresets = null;
+let atmosphereControls = null;
+async function syncAtmosphere() {
+ if (!atmospherePresets) atmospherePresets = await fetch('/dungeon-editor/atmosphere-presets.json').then(r=>r.json());
+ if (!atmosphereControls) {
+  atmosphereControls = document.createElement('fieldset'); atmosphereControls.className='dungeon-atmosphere-controls';
+  const legend = document.createElement('legend'); legend.textContent=t('atmosphereTitle'); atmosphereControls.append(legend);
+  const preset = document.createElement('select'); preset.setAttribute('aria-label',t('atmosphereTitle'));
+  for (const key of Object.keys(atmospherePresets)) {const option=document.createElement('option'); option.value=key; option.textContent=t('atmosphere_'+key); preset.append(option);}
+  const strength=document.createElement('input'); strength.type='range'; strength.min='0';strength.max='100';strength.setAttribute('aria-label',t('atmosphereStrength'));
+  const placement=document.createElement('select');placement.setAttribute('aria-label',t('atmospherePlacement'));
+  for(const key of ['edges','uniform']) {const option=document.createElement('option');option.value=key;option.textContent=t('atmosphere_'+key);placement.append(option);}
+  atmosphereControls.append(preset,strength,placement);
+  const cards=document.createElement('div'); cards.className='dungeon-atmosphere-presets';
+  for(const [key,look] of Object.entries(atmospherePresets)) {
+   const button=document.createElement('button');button.type='button';button.className='ui-button';button.setAttribute('aria-label',t('atmosphere_'+key));
+   const canvas=document.createElement('canvas');canvas.width=72;canvas.height=40;canvas.setAttribute('aria-hidden','true');
+   const ctx=canvas.getContext('2d');ctx.fillStyle='#b6a780';ctx.fillRect(0,0,72,40);ctx.fillStyle='#5d554b';ctx.fillRect(7,6,22,24);ctx.fillRect(41,13,24,20);ctx.fillRect(25,17,21,8);ctx.fillStyle='#d0c1a2';ctx.fillRect(9,8,18,20);ctx.fillRect(43,15,20,16);ctx.fillRect(25,19,21,4);
+   const image=ctx.getImageData(0,0,72,40);const d=image.data;const [r,g,b,c,s,lift]=look;
+   for(let i=0;i<d.length;i+=4){const rgb=[d[i],d[i+1],d[i+2]];const luminance=rgb[0]*.2126+rgb[1]*.7152+rgb[2]*.0722;const radius=Math.min(1,Math.hypot((((i/4)%72)+.5)/36-1,(Math.floor(i/4/72)+.5)/20-1));const weight=.5*(.15+.85*radius*radius*(3-2*radius));for(let row=0;row<3;row++){const changed=[r,g,b][row]*c*(s*rgb[row]+(1-s)*luminance)+((1-c)/2+lift)*255;d[i+row]=rgb[row]+weight*(changed-rgb[row]);}}
+   ctx.putImageData(image,0,0);const caption=document.createElement('small');caption.textContent=t('atmosphere_'+key);button.append(canvas,caption);button.onclick=()=>{preset.value=key;preset.dispatchEvent(new Event('input'));};cards.append(button);
+  }
+  atmosphereControls.append(cards);
+
+  for(const input of [preset,strength,placement]) input.addEventListener('input',()=>{
+   if(!currentProject)return;
+   currentProject.atmosphere={preset:preset.value,strength:Number(strength.value),placement:placement.value};
+   applyDungeonAtmosphere();syncAppSelects();markWorkingCopyDirty();
+  });
+  document.querySelector('[data-tool-panel="colors"]').append(atmosphereControls);
+  for(const input of [preset,strength,placement]) { const field=document.createElement('label');field.className='field';const caption=document.createElement('span');caption.textContent=input.getAttribute('aria-label');input.before(field);field.append(caption,input); }
+  initializeAppSelects();
+ }
+ const settings=currentProject?.atmosphere ?? {};
+ const inputs=atmosphereControls.querySelectorAll('select,input');
+ inputs[0].value=settings.preset ?? 'none';inputs[1].value=settings.strength ?? 50;inputs[2].value=settings.placement ?? 'edges';
+ syncAppSelects();
+ applyDungeonAtmosphere();
+}
+let atmosphereFrame = 0;
+let atmosphereRenderVersion = 0;
+let atmosphereCacheKey = '';
+let atmosphereCanvas = null;
+function applyDungeonAtmosphere() {
+ if(atmosphereFrame) clearTimeout(atmosphereFrame);
+ atmosphereFrame=setTimeout(()=>{atmosphereFrame=0;void renderDungeonAtmosphere();},80);
+}
+async function renderDungeonAtmosphere() {
+ const settings=currentProject?.atmosphere ?? {};
+ const look=atmospherePresets?.[settings.preset];
+ const version=++atmosphereRenderVersion;
+ for(const id of ['mapImage','mapImageBuffer','browserRenderCanvas','structureMap']) document.getElementById(id).style.filter='';
+ if(!atmosphereCanvas){atmosphereCanvas=document.createElement('canvas');atmosphereCanvas.className='map-image dungeon-atmosphere-layer';atmosphereCanvas.setAttribute('aria-hidden','true');elements.mapSurface.append(atmosphereCanvas);}
+ if(!currentProject || !look || settings.preset==='none' || Number(settings.strength)===0){atmosphereCanvas.hidden=true;atmosphereCacheKey='';return;}
+ const structure=!elements.structureMap.hasAttribute('hidden');
+ const key=JSON.stringify([currentProjectId,currentProject.clientRevision,currentProject.structure?.revision,currentImageUrl,browserCanvasAppearance,structure,currentProject.appearance,settings]);
+ if(key===atmosphereCacheKey){atmosphereCanvas.hidden=false;return;}
+ let source=hasBrowserCanvasImage()&&!structure?elements.browserRenderCanvas:elements.mapImage;
+ let temporaryUrl=null;
+ if(structure){temporaryUrl=URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(elements.structureMap)],{type:'image/svg+xml'}));source=new Image();source.src=temporaryUrl;}
+ try {
+  if(source instanceof HTMLImageElement) await source.decode();
+  if(version!==atmosphereRenderVersion || !currentProject)return;
+  const width=source.naturalWidth||source.width.baseVal?.value||source.width;
+  const height=source.naturalHeight||source.height.baseVal?.value||source.height;
+  if(!width||!height)return;
+  const scale=Math.min(1,1024/Math.max(width,height));
+  const scratch=document.createElement('canvas');scratch.width=Math.max(1,Math.round(width*scale));scratch.height=Math.max(1,Math.round(height*scale));
+  const ctx=scratch.getContext('2d');ctx.drawImage(source,0,0,scratch.width,scratch.height);
+  const data=ctx.getImageData(0,0,scratch.width,scratch.height),d=data.data;
+  const [r,g,b,c,s,lift]=look;const a=Math.max(0,Math.min(100,Number(settings.strength??50)))/100;
+  for(let i=0;i<d.length;i+=4){const rgb=[d[i],d[i+1],d[i+2]],l=rgb[0]*.2126+rgb[1]*.7152+rgb[2]*.0722;const radius=Math.min(1,Math.hypot((i/4%scratch.width+.5)/scratch.width*2-1,(Math.floor(i/4/scratch.width)+.5)/scratch.height*2-1));const weight=a*(settings.placement==='uniform'?1:.15+.85*radius*radius*(3-2*radius));for(let row=0;row<3;row++)d[i+row]=[r,g,b][row]*c*(s*rgb[row]+(1-s)*l)+((1-c)/2+lift)*255;d[i+3]*=weight;}
+  ctx.putImageData(data,0,0);
+  atmosphereCanvas.width=scratch.width;atmosphereCanvas.height=scratch.height;
+  atmosphereCanvas.getContext('2d').drawImage(scratch,0,0);
+  atmosphereCanvas.hidden=false;atmosphereCacheKey=key;
+ } catch {atmosphereCanvas.hidden=true;atmosphereCacheKey='';}
+ finally {if(temporaryUrl)URL.revokeObjectURL(temporaryUrl);}
+}
+
+function closeDeletedProject() {
+ const deletedId=currentProjectId;
+ atmosphereRenderVersion++;if(atmosphereCanvas)atmosphereCanvas.hidden=true;
+ currentProjectId=null;currentProject=null;workingCopyDirty=false;
+ canonicalRenderSequence++;imageSwapSequence++;browserCanvasReady=false;
+ cancelScheduledDraftPersist();
+ clearTimeout(checkpointTimer);clearTimeout(appearanceUpdateTimer);cancelCanonicalRender();
+ currentProjectName='';localStatus='';pendingHostSaveRevision=null;
+ pendingClassificationCells.clear();pendingDecorationObjectIds.clear();renderedDecorationObjectIds.clear();
+ elements.structureMap.replaceChildren();elements.mapSurface.removeAttribute('style');
+ undoStack.length=0;redoStack.length=0;
+ setProjectImage(null);applyDungeonAtmosphere();
+ if(deletedId) void deleteWorkingDraft(deletedId);
+ hideLoading();renderAll();activateTool('projects');
+}

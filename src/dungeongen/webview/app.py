@@ -322,6 +322,11 @@ def editor_palettes() -> Response:
     return _editor_response("palettes.json", "application/json; charset=utf-8")
 
 
+@app.get("/dungeon-editor/atmosphere-presets.json")
+def atmosphere_presets() -> Response:
+    return _editor_response("atmosphere-presets.json", "application/json; charset=utf-8")
+
+
 @app.get("/dungeon-editor/config.json")
 def editor_config() -> Response:
     response = jsonify(_public_editor_config())

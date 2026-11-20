@@ -226,5 +226,20 @@
 	"zoomOut": "Уменьшить",
 	"fit": "Вписать карту",
 	"loadingScreenAria": "Загрузка проекта подземелья",
-	"loadingProgressLabel": "Прогресс подготовки подземелья"
+	"loadingProgressLabel": "Прогресс подготовки подземелья",
+	"atmosphere_none": "Без фильтра",
+	"atmosphere_gloom": "Мрачный",
+	"atmosphere_contrast": "Контрастный",
+	"atmosphere_cold": "Холодный",
+	"atmosphere_warm": "Тёплый",
+	"atmosphere_faded": "Выцветший",
+	"atmosphere_sepia": "Сепия",
+	"atmosphere_bloodMoon": "Кровавая луна",
+	"atmosphere_fog": "Туман",
+	"atmosphere_purple": "Фиолетовый",
+	"atmosphereTitle": "Атмосферный фильтр",
+	"atmosphereStrength": "Сила эффекта",
+	"atmospherePlacement": "Наложение эффекта",
+	"atmosphere_edges": "Сильнее по краям",
+	"atmosphere_uniform": "Равномерно"
 }

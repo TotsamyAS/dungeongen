@@ -245,6 +245,7 @@ def normalize_project(value: Any) -> dict[str, Any]:
     project["clientRevision"] = client_revision
     project["parameters"] = normalize_parameters(value.get("parameters"), choose_seed=False)
     project["appearance"] = normalize_appearance(value.get("appearance"))
+    project["atmosphere"] = value.get("atmosphere") if isinstance(value.get("atmosphere"), dict) else {}
 
     render_svg = value.get("renderSvg")
     if render_svg is not None:
@@ -1209,7 +1210,8 @@ def render_project_jpeg(value: Any, quality: int = 92) -> bytes:
     transform.postTranslate(padding, padding)
     dungeon_map.render(canvas, transform)
     _draw_structure_numbers(canvas, project, transform, project["appearance"])
-    data = surface.makeImageSnapshot().encodeToData(skia.kJPEG, quality)
+    from .atmosphere import apply_atmosphere
+    data = apply_atmosphere(surface.makeImageSnapshot(), project.get("atmosphere")).encodeToData(skia.kJPEG, quality)
     if data is None:
         raise RuntimeError("jpegEncodingFailed")
     return bytes(data)
